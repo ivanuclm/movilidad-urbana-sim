@@ -1,12 +1,15 @@
 # Simulador de movilidad urbana (PoC)
 
-Prueba de concepto para el Trabajo Fin de Máster sobre un **simulador web de escenarios de movilidad urbana**. El objetivo de esta PoC es disponer de una base técnica sólida:
+Trabajo Fin de Máster del Máster Universitario en Ingeniería Informática:
+**SIMULADOR WEB DE ESCENARIOS DE MOVILIDAD URBANA MEDIANTE TÉCNICAS DE INTELIGENCIA ARTIFICIAL**. 
+
+El objetivo de este PoC es disponer de una base técnica sólida:
 
 - Backend en **FastAPI** que consulta servicios OSRM para distintos modos de transporte.
 - Frontend en **Vite + React + TypeScript** con **Leaflet** para la visualización sobre mapa.
 - Comparación de rutas para **coche, bici y a pie**, con distancias, tiempos e itinerario dibujado en el mapa.
 
-> ⚠️ Nota: esta PoC no integra todavía el modelo de Machine Learning (LPMC). Se centra en la parte de trayectos y enrutado. El modelo se conectará en fases posteriores del TFM.
+> ⚠️ Nota: aún no se integra el LPMC.
 
 ---
 
