@@ -23,7 +23,7 @@ class RouteResult(BaseModel):
     profile: Profile
     distance_m: float
     duration_s: float
-    geometry: list[Point]
+    geometry: List[Point]
 
 
 class RouteResponse(BaseModel):

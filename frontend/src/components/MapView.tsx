@@ -2,9 +2,8 @@ import { MapContainer, TileLayer, Marker, useMapEvents, Polyline } from "react-l
 import { useState } from "react";
 import L from "leaflet";
 
-const defaultCenter: [number, number] = [38.986, -3.927]; // Ciudad Real aprox
+const defaultCenter: [number, number] = [38.986, -3.927];
 
-// Icono por defecto de Leaflet (desde CDN para evitar líos de assets)
 const markerIcon = L.icon({
   iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
   iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
@@ -20,10 +19,9 @@ interface MapViewProps {
   destination: Point;
   setOrigin: (p: Point) => void;
   setDestination: (p: Point) => void;
-  routeGeometry?: Point[];   // Nueva prop opcional para la geometría de la ruta
+  routeGeometry: Point[];           // <- NUEVO
 }
 
-// Este componente escucha clicks en el mapa y alterna entre mover origen y destino
 function ClickHandler({
   setOrigin,
   setDestination,
@@ -48,15 +46,22 @@ function ClickHandler({
   return null;
 }
 
-export function MapView({ origin, destination, setOrigin, setDestination, routeGeometry }: MapViewProps) {
-  const polylinePositions =
-    routeGeometry?.map((p) => [p.lat, p.lon] as [number, number]) ?? [];
+export function MapView({
+  origin,
+  destination,
+  setOrigin,
+  setDestination,
+  routeGeometry,
+}: MapViewProps) {
+  const polylinePositions = routeGeometry.map(
+    (p) => [p.lat, p.lon] as [number, number]
+  );
 
   return (
     <MapContainer
       center={defaultCenter}
       zoom={13}
-      style={{ height: "400px", width: "100%", marginTop: "1rem" }}
+      className="map-container"   // <- usamos clase CSS
     >
       <TileLayer
         attribution='&copy; OpenStreetMap contributors'
@@ -68,9 +73,7 @@ export function MapView({ origin, destination, setOrigin, setDestination, routeG
       <Marker position={[origin.lat, origin.lon]} icon={markerIcon} />
       <Marker position={[destination.lat, destination.lon]} icon={markerIcon} />
 
-      {polylinePositions.length > 0 && (
-        <Polyline positions={polylinePositions} />
-      )}
+      {polylinePositions.length > 0 && <Polyline positions={polylinePositions} />}
     </MapContainer>
   );
 }
