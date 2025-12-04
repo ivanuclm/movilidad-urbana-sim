@@ -1,13 +1,9 @@
-
 :root {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   line-height: 1.5;
   font-weight: 400;
   color: #111827;
   background-color: #e5e7eb;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
 }
 
 *,
@@ -22,11 +18,8 @@ body {
 }
 
 #root {
-  max-width: 1200px;
+  min-height: 100vh;
+  padding: 1.5rem 2rem 2rem;
+  /* max-width: 1400px;  */
   margin: 0 auto;
-  padding: 1.5rem 1.5rem 2rem;
-}
-
-a {
-  color: inherit;
 }

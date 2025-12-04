@@ -1,10 +1,10 @@
-
 .app-root {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
 }
 
+/* Cabecera */
 .app-header-title {
   margin: 0;
   font-size: 2.1rem;
@@ -17,18 +17,21 @@
   font-size: 0.95rem;
 }
 
+/* Contenedor principal */
 .app-main {
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
 }
 
-/* En escritorio, mapa a la izquierda, panel a la derecha */
+/* En escritorio: mapa grande a la izquierda, panel a la derecha */
 @media (min-width: 900px) {
   .app-main {
     display: grid;
-    grid-template-columns: minmax(1fr,6fr) minmax(0,2fr);
-    align-items: flex-start;
+    /* Mapa mucho más ancho que el panel */
+    grid-template-columns: minmax(0, 5fr) minmax(0, 2fr);
+    align-items: stretch;
+    gap: 1.5rem;
   }
 }
 
@@ -39,8 +42,11 @@
   padding: 1rem 1.25rem;
 }
 
+/* Que la tarjeta del mapa ocupe casi toda la altura de la ventana */
 .map-card {
-  padding-bottom: 1.25rem;
+  height: calc(100vh - 200px); /* ajusta 200 según lo que ocupe la cabecera */
+  display: flex;
+  flex-direction: column;
 }
 
 .section-title {
@@ -48,12 +54,14 @@
   font-size: 1.1rem;
 }
 
+/* El MapContainer usará todo el espacio disponible de la tarjeta */
 .map-container {
-  height: 480px;
+  flex: 1;
   width: 100%;
   margin-top: 0.5rem;
 }
 
+/* Panel de modos + tabla */
 .mode-toolbar {
   display: flex;
   flex-wrap: wrap;
