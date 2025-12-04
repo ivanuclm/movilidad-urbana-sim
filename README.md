@@ -55,6 +55,11 @@ Estas instancias:
 
 La decisión se ha encapsulado en un cliente de servicio específico. Si en una fase posterior del TFM se despliega un **OSRM propio**, bastará con cambiar las URLs base en un único punto sin afectar al resto del backend ni al frontend.
 
+Enlaces de interés:
+https://github.com/Project-OSRM/osrm-backend/issues/4868
+https://github.com/Project-OSRM/osrm-backend/wiki/Demo-server
+https://project-osrm.org/docs/v5.5.1/api/#general-options
+
 #### Opciones futuras: OSRM propio y OpenTripPlanner
 
 A medio plazo se contemplan dos líneas de evolución:
