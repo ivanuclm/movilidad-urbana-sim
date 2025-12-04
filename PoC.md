@@ -62,6 +62,25 @@ Para cada petición origen–destino y perfil, se solicitan:
 
 La geometría se devuelve como una lista de puntos `{lat, lon}` que el frontend puede consumir directamente con Leaflet para pintar la polilínea sobre el mapa.
 
+### 2.4. Consideraciones éticas sobre el uso de `routing.openstreetmap.de`
+
+El uso de `routing.openstreetmap.de` en este TFM se plantea desde una perspectiva de **buen uso de infraestructuras comunitarias**:
+
+- el volumen de peticiones generado por la PoC es muy reducido y comparable al de un usuario interactuando con un visor cartográfico;
+- no se realizan campañas de estrés ni simulaciones masivas que puedan comprometer la calidad del servicio para otros usuarios;
+- en caso de que el proyecto requiera ejecutar experimentos a gran escala (por ejemplo, millones de rutas para calibrar un modelo), la solución adecuada pasaría por desplegar una instancia propia de OSRM u otros servicios dedicados.
+
+De este modo se respeta el esfuerzo de la comunidad FOSSGIS/OpenStreetMap que mantiene estas instancias públicas y se alinea el desarrollo del TFM con prácticas responsables en el uso de recursos compartidos.
+
+
+Para cada petición origen–destino y perfil, se solicitan:
+
+- distancia (`distance`) en metros,
+- duración (`duration`) en segundos,
+- y la geometría de la ruta mediante `geometries=geojson` y `overview=full`.
+
+La geometría se devuelve como una lista de puntos `{lat, lon}` que el frontend puede consumir directamente con Leaflet para pintar la polilínea sobre el mapa.
+
 ---
 
 ## 3. Arquitectura backend: FastAPI

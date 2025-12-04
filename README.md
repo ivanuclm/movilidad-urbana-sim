@@ -1,15 +1,12 @@
 # Simulador de movilidad urbana (PoC)
 
-Trabajo Fin de Máster del Máster Universitario en Ingeniería Informática:
-**SIMULADOR WEB DE ESCENARIOS DE MOVILIDAD URBANA MEDIANTE TÉCNICAS DE INTELIGENCIA ARTIFICIAL**. 
-
-El objetivo de este PoC es disponer de una base técnica sólida:
+Prueba de concepto para el Trabajo Fin de Máster sobre un **simulador web de escenarios de movilidad urbana**. El objetivo de esta PoC es disponer de una base técnica sólida:
 
 - Backend en **FastAPI** que consulta servicios OSRM para distintos modos de transporte.
 - Frontend en **Vite + React + TypeScript** con **Leaflet** para la visualización sobre mapa.
 - Comparación de rutas para **coche, bici y a pie**, con distancias, tiempos e itinerario dibujado en el mapa.
 
-> ⚠️ Nota: aún no se integra el LPMC.
+> ⚠️ Nota: esta PoC no integra todavía el modelo de Machine Learning (LPMC). Se centra en la parte de trayectos y enrutado. El modelo se conectará en fases posteriores del TFM.
 
 ---
 
@@ -33,11 +30,47 @@ Este endpoint recibe un origen, un destino y una lista de perfiles (`driving`, `
 - duración en segundos,
 - geometría de la ruta como lista de puntos `{lat, lon}`.
 
-Internamente, la API llama a los servicios OSRM públicos de FOSSGIS:
+#### Por qué se utiliza `routing.openstreetmap.de` y no el demoserver oficial de OSRM
+
+Durante las primeras pruebas se utilizó el demoserver oficial de OSRM:
+
+- `https://router.project-osrm.org/route/v1/{profile}/...`
+
+Aunque la API permite indicar distintos perfiles (`driving`, `cycling`, `foot`), la propia comunidad de OSRM indica en sus issues que **el demoserver solo tiene cargado el dataset del perfil de coche**. En la práctica esto se traduce en que:
+
+- las peticiones con `cycling` o `foot` devuelven exactamente la misma distancia y duración que `driving`;
+- por tanto, no sirven para analizar comparativamente distintos modos de transporte, que es justo el objetivo del TFM.
+
+Con el fin de evitar montar desde ya una infraestructura propia de OSRM (gestión de contenedores Docker, descarga de extractos OSM, reconstrucción de índices para cada perfil, etc.), pero sin renunciar a rutas diferenciadas por modo, se optó por utilizar las instancias públicas de FOSSGIS:
 
 - `https://routing.openstreetmap.de/routed-car`
 - `https://routing.openstreetmap.de/routed-bike`
 - `https://routing.openstreetmap.de/routed-foot`
+
+Estas instancias:
+
+- exponen la misma API que OSRM v5,
+- disponen de perfiles separados para coche, bici y peatón,
+- y son suficientes para una prueba de concepto académica en la que el tráfico de peticiones es moderado.
+
+La decisión se ha encapsulado en un cliente de servicio específico. Si en una fase posterior del TFM se despliega un **OSRM propio**, bastará con cambiar las URLs base en un único punto sin afectar al resto del backend ni al frontend.
+
+#### Opciones futuras: OSRM propio y OpenTripPlanner
+
+A medio plazo se contemplan dos líneas de evolución:
+
+1. **Desplegar un OSRM propio** para los modos individuales (coche, bici, a pie), usando las imágenes oficiales de Docker y extractos OSM ajustados a la ciudad de estudio (Ciudad Real, Valencia, etc.). Esto eliminaría la dependencia de servicios externos y permitiría ajustar los perfiles de enrutado a criterios propios (por ejemplo, penalizar ciertas vías o zonas).
+2. **Integrar OpenTripPlanner (OTP)** para el transporte público, a partir de ficheros GTFS. OTP está mejor orientado a itinerarios multimodales con horarios (bus, tren, metro), mientras que OSRM es ideal para modos continuos como coche, bici o caminar. En el diseño del TFM, OSRM y OTP se consideran complementarios.
+
+#### Consideraciones éticas y de buen uso de `routing.openstreetmap.de`
+
+`routing.openstreetmap.de` es una infraestructura pública mantenida por la comunidad FOSSGIS. Desde el punto de vista ético y de buenas prácticas:
+
+- el uso que se hace en este TFM es **moderado y de carácter académico**, equivalente a las peticiones que haría un usuario explorando rutas en un visor web;
+- se evita lanzar cargas masivas de experimentos o “stress tests” contra el servicio;
+- en caso de necesitar un volumen elevado de simulaciones, la opción adecuada será pasar a una instancia propia de OSRM u otra solución controlada.
+
+Estas consideraciones se tienen en cuenta para no sobrecargar servicios comunitarios y respetar el espíritu de colaboración de la comunidad OpenStreetMap.
 
 ### Frontend (Vite + React)
 
