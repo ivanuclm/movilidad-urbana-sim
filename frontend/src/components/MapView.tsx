@@ -2,7 +2,7 @@ import { MapContainer, TileLayer, Marker, useMapEvents, Polyline, CircleMarker, 
 import { useState } from "react";
 import L from "leaflet";
 
-const defaultCenter: [number, number] = [38.986, -3.927];
+const defaultCenter: [number, number] = [39.86251, -4.02726]; // Centro en Toledo
 
 const markerIcon = L.icon({
   iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",

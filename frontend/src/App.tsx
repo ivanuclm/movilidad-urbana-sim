@@ -54,8 +54,8 @@ const PROFILE_LABELS: Record<Profile, string> = {
 };
 
 function App() {
-  const [origin, setOrigin] = useState<Point>({ lat: 38.986, lon: -3.927 });
-  const [destination, setDestination] = useState<Point>({ lat: 38.99, lon: -3.92 });
+  const [origin, setOrigin] = useState<Point>({ lat: 39.87029, lon: -4.03434 });
+  const [destination, setDestination] = useState<Point>({ lat: 39.85968, lon: -4.00525 });
   const [selectedProfile, setSelectedProfile] = useState<Profile>("driving");
   const [showGtfsStops, setShowGtfsStops] = useState(true);
 
@@ -66,7 +66,7 @@ function App() {
   const gtfsStopsQuery = useQuery<GtfsStop[]>({
     queryKey: ["gtfs-stops"],
     queryFn: async () => {
-      const res = await fetch("http://127.0.0.1:8000/api/gtfs/stops?limit=500000");
+      const res = await fetch("http://127.0.0.1:8000/api/gtfs/stops?limit=5000");
       if (!res.ok) throw new Error("Error cargando paradas GTFS");
       return res.json();
     },
@@ -77,7 +77,7 @@ function App() {
   return (
     <div className="app-root">
       <header className="app-header">
-        <h1 className="app-header-title">Simulador de movilidad urbana (PoC)</h1>
+        <h1 className="app-header-title">Simulador de movilidad urbana</h1>
         <p className="app-header-subtitle">
           Haz clic en el mapa para colocar origen y destino (alternando). Luego pulsa en
           <strong> "Calcular rutas"</strong>.

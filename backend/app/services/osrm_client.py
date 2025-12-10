@@ -7,9 +7,11 @@ Profile = Literal["driving", "cycling", "foot"]
 # OSRM_BASE_URL = "https://router.project-osrm.org"
 OSRM_BASE_URLS = {
     # "driving": "https://routing.openstreetmap.de/routed-car",
+    # "cycling": "https://routing.openstreetmap.de/routed-bike",
+    # "foot": "https://routing.openstreetmap.de/routed-foot",
     "driving": "http://127.0.0.1:5000", # Usamos instancia local de OSRM con perfil car.lua
-    "cycling": "https://routing.openstreetmap.de/routed-bike",
-    "foot": "https://routing.openstreetmap.de/routed-foot",
+    "cycling": "http://127.0.0.1:5001", # bike.lua
+    "foot":    "http://127.0.0.1:5002", # foot.lua
 }
 
 
