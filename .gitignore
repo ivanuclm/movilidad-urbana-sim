@@ -39,5 +39,5 @@ Thumbs.db
 
 # Archivos GTFS
 backend/data/gtfs/*.zip
-backend/app/__pycache__/main.cpython-311.pyc
-backend/app/services/__pycache__/osrm_client.cpython-311.pyc
+backend/app/__pycache__/*
+backend/app/services/__pycache__/*
