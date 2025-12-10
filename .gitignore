@@ -36,3 +36,8 @@ frontend/dist/
 .DS_Store
 Thumbs.db
 .env
+
+# Archivos GTFS
+backend/data/gtfs/*.zip
+backend/app/__pycache__/main.cpython-311.pyc
+backend/app/services/__pycache__/osrm_client.cpython-311.pyc

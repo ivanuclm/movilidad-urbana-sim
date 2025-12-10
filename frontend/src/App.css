@@ -121,3 +121,25 @@
 .row-active {
   background: #eff6ff;
 }
+
+.marker-circle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: bold;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.4);
+}
+
+.marker-origin {
+  background-color: #16a34a; /* verde */
+}
+
+.marker-destination {
+  background-color: #dc2626; /* rojo */
+}

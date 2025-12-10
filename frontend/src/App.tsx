@@ -1,11 +1,21 @@
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { MapView } from "./components/MapView";
 import "./App.css";
 
 type Profile = "driving" | "cycling" | "foot";
 
 type Point = { lat: number; lon: number };
+
+type GtfsStop = {
+  id: string;
+  code?: string;
+  name?: string;
+  desc?: string;
+  lat: number;
+  lon: number;
+};
+
 
 interface RouteResult {
   profile: Profile;
@@ -47,11 +57,20 @@ function App() {
   const [origin, setOrigin] = useState<Point>({ lat: 38.986, lon: -3.927 });
   const [destination, setDestination] = useState<Point>({ lat: 38.99, lon: -3.92 });
   const [selectedProfile, setSelectedProfile] = useState<Profile>("driving");
+  const [showGtfsStops, setShowGtfsStops] = useState(true);
 
   const { mutate, data, isPending, error } = useMutation<RouteResponse, Error>({
     mutationFn: () => fetchRoutes(origin, destination),
   });
 
+  const gtfsStopsQuery = useQuery<GtfsStop[]>({
+    queryKey: ["gtfs-stops"],
+    queryFn: async () => {
+      const res = await fetch("http://127.0.0.1:8000/api/gtfs/stops?limit=500000");
+      if (!res.ok) throw new Error("Error cargando paradas GTFS");
+      return res.json();
+    },
+  });
   const selectedRoute =
     data?.results.find((r) => r.profile === selectedProfile) ?? null;
 
@@ -75,11 +94,23 @@ function App() {
             setOrigin={setOrigin}
             setDestination={setDestination}
             routeGeometry={selectedRoute?.geometry ?? []}
+            gtfsStops={
+              showGtfsStops && gtfsStopsQuery.data ? gtfsStopsQuery.data : []
+            }
           />
         </section>
 
         {/* Columna derecha: panel de modos y tabla */}
         <section className="card panel-card">
+          <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" }}>
+            <input
+              type="checkbox"
+              checked={showGtfsStops}
+              onChange={(e) => setShowGtfsStops(e.target.checked)}
+            />
+            Mostrar paradas de transporte público (GTFS CRTM)
+          </label>
+
           <h2 className="section-title">Rutas OSRM</h2>
 
           <div className="mode-toolbar">
