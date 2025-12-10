@@ -16,6 +16,11 @@ router = APIRouter(prefix="/api/gtfs", tags=["gtfs"])
 # -----------------------
 # Modelos para la API
 # -----------------------
+class StopRoute(BaseModel):
+    id: str
+    short_name: Optional[str] = None
+    long_name: Optional[str] = None
+
 
 class GtfsStop(BaseModel):
     id: str
@@ -25,6 +30,7 @@ class GtfsStop(BaseModel):
     lon: float
     code: Optional[str] = None
     wheelchair_boarding: Optional[int] = None
+    routes: List[StopRoute] = []
 
 
 class GtfsRoute(BaseModel):
@@ -86,6 +92,14 @@ def get_stops(
             lon=s["lon"],
             code=s.get("code"),
             wheelchair_boarding=s.get("wheelchair_boarding"),
+            routes=[
+                StopRoute(
+                    id=sr["route_id"],
+                    short_name=sr.get("short_name"),
+                    long_name=sr.get("long_name"),
+                )
+                for sr in (s.get("routes") or [])
+            ],
         )
         for s in stops_raw
     ]

@@ -127,6 +127,38 @@ def load_gtfs_data(gtfs_dir: Optional[Path] = None) -> GtfsData:
     for trip_id, lst in stop_times_by_trip.items():
         lst.sort(key=lambda x: x["sequence"])
 
+    
+    # trip_id -> route_id para lookup rápido
+    trip_to_route: Dict[str, str] = {}
+    for route_id, trip_list in trips_by_route.items():
+        for trip in trip_list:
+            trip_to_route[trip["trip_id"]] = route_id
+
+    # stop_id -> set(route_id)
+    stop_routes: Dict[str, set[str]] = {sid: set() for sid in stops.keys()}
+    for trip_id, st_list in stop_times_by_trip.items():
+        route_id = trip_to_route.get(trip_id)
+        if not route_id:
+            continue
+        for st in st_list:
+            sid = st["stop_id"]
+            if sid in stop_routes:
+                stop_routes[sid].add(route_id)
+
+    # Adjuntamos info de rutas a cada parada
+    for sid, stop in stops.items():
+        route_ids = sorted(stop_routes.get(sid, []))
+        stop["routes"] = [
+            {
+                "route_id": rid,
+                "short_name": routes[rid].get("short_name"),
+                "long_name": routes[rid].get("long_name"),
+            }
+            for rid in route_ids
+            if rid in routes
+        ]
+
+
     # Shapes agrupados por shape_id
     shapes_by_id: Dict[str, List[Tuple[float, float, int]]] = {}
     for row in shapes_raw:

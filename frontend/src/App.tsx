@@ -7,6 +7,12 @@ type Profile = "driving" | "cycling" | "foot";
 
 type Point = { lat: number; lon: number };
 
+type TransitRouteRef = {
+  id: string;
+  short_name?: string;
+  long_name?: string;
+};
+
 type GtfsStop = {
   id: string;
   code?: string;
@@ -14,14 +20,14 @@ type GtfsStop = {
   desc?: string;
   lat: number;
   lon: number;
+  routes?: TransitRouteRef[];
 };
-
 
 interface RouteResult {
   profile: Profile;
   distance_m: number;
   duration_s: number;
-  geometry: Point[];       // <- NUEVO
+  geometry: Point[];
 }
 
 interface RouteResponse {
@@ -29,6 +35,21 @@ interface RouteResponse {
   destination: Point;
   results: RouteResult[];
 }
+
+type TransitRouteDetails = {
+  route: {
+    id: string;
+    short_name?: string;
+    long_name?: string;
+    desc?: string;
+    type?: number;
+    agency_id?: string;
+    color?: string | null;
+    text_color?: string | null;
+  };
+  stops: (GtfsStop & { sequence: number })[];
+  shape?: Point[];
+};
 
 async function fetchRoutes(origin: Point, destination: Point): Promise<RouteResponse> {
   const res = await fetch("http://127.0.0.1:8000/api/osrm/routes", {
@@ -58,11 +79,17 @@ function App() {
   const [destination, setDestination] = useState<Point>({ lat: 39.85968, lon: -4.00525 });
   const [selectedProfile, setSelectedProfile] = useState<Profile>("driving");
   const [showGtfsStops, setShowGtfsStops] = useState(true);
+  const [selectedTransitRouteId, setSelectedTransitRouteId] = useState<string | null>(null);
 
+  // OSRM
   const { mutate, data, isPending, error } = useMutation<RouteResponse, Error>({
     mutationFn: () => fetchRoutes(origin, destination),
   });
 
+  const selectedRoute =
+    data?.results.find((r) => r.profile === selectedProfile) ?? null;
+
+  // Paradas GTFS (todas)
   const gtfsStopsQuery = useQuery<GtfsStop[]>({
     queryKey: ["gtfs-stops"],
     queryFn: async () => {
@@ -71,8 +98,22 @@ function App() {
       return res.json();
     },
   });
-  const selectedRoute =
-    data?.results.find((r) => r.profile === selectedProfile) ?? null;
+
+  // Detalles de la ruta GTFS seleccionada (shape + paradas)
+  const transitRouteDetailsQuery = useQuery<TransitRouteDetails>({
+    queryKey: ["gtfs-route-details", selectedTransitRouteId],
+    enabled: !!selectedTransitRouteId,
+    queryFn: async () => {
+      const res = await fetch(
+        `http://127.0.0.1:8000/api/gtfs/routes/${selectedTransitRouteId}`
+      );
+      if (!res.ok) throw new Error("Error cargando detalles de ruta GTFS");
+      return res.json();
+    },
+  });
+
+  const transitShape = transitRouteDetailsQuery.data?.shape ?? [];
+  const transitRouteStops = transitRouteDetailsQuery.data?.stops ?? [];
 
   return (
     <div className="app-root">
@@ -93,22 +134,34 @@ function App() {
             destination={destination}
             setOrigin={setOrigin}
             setDestination={setDestination}
-            routeGeometry={selectedRoute?.geometry ?? []}
+            routeGeometry={selectedRoute?.geometry ?? []} // OSRM seleccionado
             gtfsStops={
               showGtfsStops && gtfsStopsQuery.data ? gtfsStopsQuery.data : []
             }
+            transitShape={transitShape}
+            transitRouteStops={transitRouteStops}
+            onSelectTransitRoute={(routeId) => {
+              setSelectedTransitRouteId(routeId);
+            }}
           />
         </section>
 
         {/* Columna derecha: panel de modos y tabla */}
         <section className="card panel-card">
-          <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" }}>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "0.4rem",
+              marginBottom: "0.5rem",
+            }}
+          >
             <input
               type="checkbox"
               checked={showGtfsStops}
               onChange={(e) => setShowGtfsStops(e.target.checked)}
             />
-            Mostrar paradas de transporte público (GTFS CRTM)
+            Mostrar paradas de transporte público (GTFS Toledo)
           </label>
 
           <h2 className="section-title">Rutas OSRM</h2>
@@ -166,6 +219,34 @@ function App() {
                 ))}
               </tbody>
             </table>
+          )}
+
+          {selectedTransitRouteId && (
+            <div className="transit-summary">
+              <h3>Transporte público (GTFS)</h3>
+              {transitRouteDetailsQuery.isLoading && <p>Cargando ruta…</p>}
+              {transitRouteDetailsQuery.error && (
+                <p className="error-text">
+                  Error cargando ruta GTFS seleccionada
+                </p>
+              )}
+              {transitRouteDetailsQuery.data && (
+                <>
+                  <p>
+                    Ruta:{" "}
+                    <strong>
+                      {transitRouteDetailsQuery.data.route.short_name ||
+                        transitRouteDetailsQuery.data.route.long_name ||
+                        transitRouteDetailsQuery.data.route.id}
+                    </strong>{" "}
+                    ({transitRouteStops.length} paradas)
+                  </p>
+                  <p style={{ fontSize: "0.85rem", color: "#4b5563" }}>
+                    Seleccionada desde el tooltip de una parada.
+                  </p>
+                </>
+              )}
+            </div>
           )}
         </section>
       </main>
