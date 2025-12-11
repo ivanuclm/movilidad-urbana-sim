@@ -76,6 +76,13 @@ type GtfsStop = {
   routes?: TransitRouteRef[];
 };
 
+type TransitLegSegment = {
+  mode: string;
+  distance_m: number;
+  duration_s: number;
+  geometry: Point[];
+};
+
 interface MapViewProps {
   origin: Point;
   destination: Point;
@@ -86,6 +93,7 @@ interface MapViewProps {
   transitShape?: Point[];
   transitRouteStops?: GtfsStop[];
   onSelectTransitRoute?: (routeId: string) => void;
+  transitSegments?: TransitLegSegment[];
 }
 
 function ClickHandler({
@@ -122,6 +130,7 @@ export function MapView({
   transitShape,
   transitRouteStops,
   onSelectTransitRoute,
+  transitSegments,
 }: MapViewProps) {
   const osrmPolylinePositions = routeGeometry.map(
     (p) => [p.lat, p.lon] as [number, number]
@@ -130,6 +139,14 @@ export function MapView({
   const transitPolylinePositions = (transitShape ?? []).map(
     (p) => [p.lat, p.lon] as [number, number]
   );
+
+  const otpTransitPolylines =
+    transitSegments?.map((seg) => ({
+      mode: seg.mode,
+      positions: seg.geometry.map(
+        (p) => [p.lat, p.lon] as [number, number]
+      ),
+    })) ?? [];
 
   return (
     <MapContainer center={defaultCenter} zoom={13} className="map-container">
@@ -156,6 +173,28 @@ export function MapView({
           pathOptions={{ color: "#f97316", weight: 4 }}
         />
       )}
+
+      {otpTransitPolylines.map((seg, idx) => {
+        const isWalk = seg.mode === "WALK";
+        return (
+          <Polyline
+            key={`otp-${idx}`}
+            positions={seg.positions}
+            pathOptions={
+              isWalk
+                ? {
+                    color: "#4b5563",
+                    weight: 4,
+                    dashArray: "6 6", // línea discontinua para caminar
+                  }
+                : {
+                    color: "#f97316",
+                    weight: 5, // más gordita para el bus
+                  }
+            }
+          />
+        );
+      })}
 
       {/* Paradas GTFS (todas) */}
       {gtfsStops &&

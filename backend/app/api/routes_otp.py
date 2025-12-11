@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-import os
 from datetime import datetime
 from typing import List
 
-import requests
+import httpx
+import polyline
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/otp", tags=["otp"])
 
-OTP_BASE_URL = os.getenv("OTP_BASE_URL", "http://localhost:8080/otp")
+OTP_PLAN_URL = "http://localhost:8080/otp/routers/default/plan"
 
 
 class Point(BaseModel):
@@ -20,104 +20,131 @@ class Point(BaseModel):
     lon: float
 
 
-class TransitRouteRequest(BaseModel):
+class OtpRouteRequest(BaseModel):
     origin: Point
     destination: Point
 
 
-class TransitRouteResult(BaseModel):
+class TransitSegment(BaseModel):
+    mode: str              # WALK, BUS, etc
     distance_m: float
     duration_s: float
     geometry: List[Point]
 
 
+class TransitResult(BaseModel):
+    distance_m: float
+    duration_s: float
+    geometry: List[Point]
+    segments: List[TransitSegment]
+
+
 class TransitRouteResponse(BaseModel):
     origin: Point
     destination: Point
-    result: TransitRouteResult
+    result: TransitResult
 
 
-def _decode_polyline(encoded: str) -> List[Point]:
-    import polyline as _polyline
+def _build_otp_params(origin: Point, destination: Point) -> dict:
+    now = datetime.now()
+    return {
+        "fromPlace": f"{origin.lat},{origin.lon}",
+        "toPlace": f"{destination.lat},{destination.lon}",
+        "mode": "TRANSIT,WALK",
+        "date": now.strftime("%Y-%m-%d"),
+        "time": now.strftime("%H:%M"),
+        "numItineraries": 5,
+        "maxWalkDistance": 2000,
+        "walkReluctance": 3.0,
+        "locale": "es",
+    }
 
-    coords = _polyline.decode(encoded, precision=5)
-    return [Point(lat=lat, lon=lon) for lat, lon in coords]
+
+def _pick_itinerary_with_transit(itineraries: list[dict]) -> dict:
+    def has_transit(it: dict) -> bool:
+        for leg in it.get("legs", []):
+            if leg.get("transitLeg"):
+                return True
+            mode = (leg.get("mode") or "").upper()
+            if mode not in ("WALK", "BICYCLE", "CAR"):
+                return True
+        return False
+
+    for it in itineraries:
+        if has_transit(it):
+            return it
+
+    return itineraries[0]
+
+
+def _decode_leg_geometry(leg: dict) -> List[Point]:
+    geom = leg.get("legGeometry")
+    if not geom or not geom.get("points"):
+        return []
+    coords = polyline.decode(geom["points"])  # [(lat, lon), ...]
+    return [Point(lat=lat, lon=lon) for (lat, lon) in coords]
 
 
 @router.post("/routes", response_model=TransitRouteResponse)
-def plan_transit_route(req: TransitRouteRequest):
-    # Fecha y hora actual para OTP, formato tipo "19-12-2025" y "2:39am"
-    now = datetime.now()
-    date_str = now.strftime("%d-%m-%Y")
-    time_str = now.strftime("%I:%M%p").lstrip("0").lower()
+async def get_otp_route(req: OtpRouteRequest) -> TransitRouteResponse:
+    params = _build_otp_params(req.origin, req.destination)
 
-    params = {
-        "fromPlace": f"{req.origin.lat},{req.origin.lon}",
-        "toPlace": f"{req.destination.lat},{req.destination.lon}",
-        "mode": "TRANSIT,WALK",
-        "date": date_str,
-        "time": time_str,
-        "numItineraries": 3,
-    }
-
-    try:
-        resp = requests.get(
-            f"{OTP_BASE_URL}/routers/default/plan",
-            params=params,
-            timeout=20,
-        )
-    except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"Error llamando a OTP: {e}")
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(OTP_PLAN_URL, params=params, timeout=20.0)
 
     if resp.status_code != 200:
         raise HTTPException(
-            status_code=resp.status_code,
-            detail=f"OTP devolvió estado {resp.status_code}",
+            status_code=502,
+            detail=f"Error al llamar a OTP: {resp.status_code}",
         )
 
     data = resp.json()
-    plan = data.get("plan")
-    if not plan:
-        raise HTTPException(status_code=502, detail="Respuesta de OTP sin campo 'plan'")
+    plan = data.get("plan") or {}
+    itineraries: list[dict] = plan.get("itineraries") or []
 
-    itineraries = plan.get("itineraries") or []
     if not itineraries:
-        raise HTTPException(
-            status_code=404,
-            detail="OTP no ha encontrado ningún itinerario de transporte público",
-        )
+        raise HTTPException(status_code=404, detail="OTP no ha encontrado rutas")
 
-    # Nos quedamos con el itinerario de menor duración total
-    best = min(itineraries, key=lambda it: it.get("duration", 0) or 0)
+    chosen = _pick_itinerary_with_transit(itineraries)
+    legs = chosen.get("legs", []) or []
 
-    duration_s = float(best.get("duration", 0) or 0)
-    legs = best.get("legs") or []
-
-    total_distance = 0.0
+    segments: List[TransitSegment] = []
     full_geometry: List[Point] = []
 
     for leg in legs:
-        # Distancia de este tramo
-        d = float(leg.get("distance", 0.0) or 0.0)
-        total_distance += d
+        pts = _decode_leg_geometry(leg)
+        if not pts:
+            continue
 
-        # Geometría codificada de cada tramo
-        geom = leg.get("legGeometry")
-        if geom and geom.get("points"):
-            pts = _decode_polyline(geom["points"])
-            if full_geometry and pts:
-                last = full_geometry[-1]
-                first = pts[0]
-                if last.lat == first.lat and last.lon == first.lon:
-                    pts = pts[1:]
-            full_geometry.extend(pts)
+        mode = (leg.get("mode") or "").upper()
+        distance_m = float(leg.get("distance") or 0.0)
+        duration_s = float(leg.get("duration") or 0.0)
+
+        segments.append(
+            TransitSegment(
+                mode=mode,
+                distance_m=distance_m,
+                duration_s=duration_s,
+                geometry=pts,
+            )
+        )
+        full_geometry.extend(pts)
+
+    # fallback por si por algún motivo no hay segmentos con geometría
+    if not segments:
+        distance_m = float(sum(float(leg.get("distance") or 0.0) for leg in legs))
+        duration_s = float(chosen.get("duration") or 0.0)
+    else:
+        distance_m = sum(seg.distance_m for seg in segments)
+        duration_s = sum(seg.duration_s for seg in segments)
 
     return TransitRouteResponse(
         origin=req.origin,
         destination=req.destination,
-        result=TransitRouteResult(
-            distance_m=total_distance,
+        result=TransitResult(
+            distance_m=distance_m,
             duration_s=duration_s,
             geometry=full_geometry,
+            segments=segments,
         ),
     )

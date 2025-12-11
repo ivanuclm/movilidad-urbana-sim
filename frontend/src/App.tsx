@@ -10,10 +10,18 @@ type UiMode = Profile | "transit";
 
 type Point = { lat: number; lon: number };
 
-type TransitResult = {
+type TransitLegSegment = {
+  mode: string;         // "WALK" | "BUS" | ...
   distance_m: number;
   duration_s: number;
   geometry: Point[];
+};
+
+type TransitResult = {
+  distance_m: number;
+  duration_s: number;
+  geometry: Point[];         // ruta completa
+  segments: TransitLegSegment[];
 };
 
 type TransitRouteResponse = {
@@ -185,6 +193,8 @@ function App() {
       ) ?? null
     : null;
 
+  const transitResult = transitMutation.data ?? null;
+
 
   const displayedGeometry: Point[] =
   selectedMode === "transit"
@@ -283,6 +293,7 @@ function App() {
             onSelectTransitRoute={(routeId) => {
               setSelectedTransitRouteId(routeId);
             }}
+            transitSegments={transitResult?.segments ?? []}
           />
         </section>
 
