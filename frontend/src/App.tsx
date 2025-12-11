@@ -5,7 +5,22 @@ import "./App.css";
 
 type Profile = "driving" | "cycling" | "foot";
 
+type UiMode = Profile | "transit";
+
+
 type Point = { lat: number; lon: number };
+
+type TransitResult = {
+  distance_m: number;
+  duration_s: number;
+  geometry: Point[];
+};
+
+type TransitRouteResponse = {
+  origin: Point;
+  destination: Point;
+  result: TransitResult;
+};
 
 type TransitRouteRef = {
   id: string;
@@ -98,6 +113,25 @@ async function fetchRoutes(
   return res.json();
 }
 
+async function fetchTransitRoute(
+  origin: Point,
+  destination: Point
+): Promise<TransitResult> {
+  const res = await fetch("http://127.0.0.1:8000/api/otp/routes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ origin, destination }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Error llamando a la API OTP: ${res.status}`);
+  }
+
+  const data: TransitRouteResponse = await res.json();
+  return data.result;
+}
+
+
 const PROFILE_LABELS: Record<Profile, string> = {
   driving: "Coche",
   cycling: "Bici",
@@ -110,7 +144,9 @@ function App() {
     lat: 39.85968,
     lon: -4.00525,
   });
-  const [selectedProfile, setSelectedProfile] = useState<Profile>("driving");
+  // const [selectedProfile, setSelectedProfile] = useState<Profile>("driving");
+  const [selectedMode, setSelectedMode] = useState<UiMode>("driving");
+
   const [showGtfsStops, setShowGtfsStops] = useState(true);
   const [selectedTransitRouteId, setSelectedTransitRouteId] = useState<
     string | null
@@ -122,12 +158,39 @@ function App() {
 
   // ---------------- OSRM ----------------
 
-  const { mutate, data, isPending, error } = useMutation<RouteResponse, Error>({
+  // const { mutate, data, isPending, error } = useMutation<RouteResponse, Error>({
+  //   mutationFn: () => fetchRoutes(origin, destination),
+  // });
+
+  const osrmMutation = useMutation<RouteResponse, Error>({
     mutationFn: () => fetchRoutes(origin, destination),
   });
 
+  const transitMutation = useMutation<TransitResult, Error>({
+    mutationFn: () => fetchTransitRoute(origin, destination),
+  });
+
+  const isCalculating =
+    osrmMutation.isPending || transitMutation.isPending;
+  // const selectedRoute =
+  //   data?.results.find((r) => r.profile === selectedProfile) ?? null;
+
+  // const selectedRoute =
+  // osrmMutation.data?.results.find((r) => r.profile === selectedProfile) ?? null;
+
   const selectedRoute =
-    data?.results.find((r) => r.profile === selectedProfile) ?? null;
+  selectedMode !== "transit"
+    ? osrmMutation.data?.results.find(
+        (r) => r.profile === selectedMode
+      ) ?? null
+    : null;
+
+
+  const displayedGeometry: Point[] =
+  selectedMode === "transit"
+    ? transitMutation.data?.geometry ?? []
+    : selectedRoute?.geometry ?? [];
+
 
   // ------------- GTFS: paradas -------------
 
@@ -210,7 +273,8 @@ function App() {
             destination={destination}
             setOrigin={setOrigin}
             setDestination={setDestination}
-            routeGeometry={selectedRoute?.geometry ?? []}
+            // routeGeometry={selectedRoute?.geometry ?? []}
+            routeGeometry={displayedGeometry}
             gtfsStops={
               showGtfsStops && gtfsStopsQuery.data ? gtfsStopsQuery.data : []
             }
@@ -287,29 +351,52 @@ function App() {
                 type="button"
                 className={
                   "mode-button" +
-                  (p === selectedProfile ? " mode-button--active" : "")
+                  (selectedMode === p ? " mode-button--active" : "")
                 }
-                onClick={() => setSelectedProfile(p)}
-                disabled={isPending}
+                onClick={() => setSelectedMode(p)}
+                disabled={isCalculating}
               >
                 {PROFILE_LABELS[p]}
               </button>
             ))}
+
+            <button
+              type="button"
+              className={
+                "mode-button" +
+                (selectedMode === "transit" ? " mode-button--active" : "")
+              }
+              onClick={() => setSelectedMode("transit")}
+              disabled={isCalculating || !transitMutation.data}
+            >
+              Transporte público
+            </button>
           </div>
 
+
           <button
-            onClick={() => mutate()}
-            disabled={isPending}
+            onClick={() => {
+              osrmMutation.mutate();
+              transitMutation.mutate();
+            }}
+            disabled={isCalculating}
             className="primary-button"
           >
-            {isPending ? "Calculando..." : "Calcular rutas OSRM"}
+            {isCalculating ? "Calculando..." : "Calcular rutas"}
           </button>
 
-          {error && (
-            <p className="error-text">Error: {(error as Error).message}</p>
+
+          {osrmMutation.error && (
+            <p className="error-text">
+              Error OSRM rutas coche/bici/a pie: {(osrmMutation.error as Error).message}
+            </p>
+          )}
+          {transitMutation.error && (
+            <p className="error-text">
+              Error OTP transporte público: {(transitMutation.error as Error).message}
+            </p>
           )}
 
-          {data && (
             <table className="routes-table">
               <thead>
                 <tr>
@@ -319,21 +406,29 @@ function App() {
                 </tr>
               </thead>
               <tbody>
-                {data.results.map((r) => (
+                {osrmMutation.data?.results.map((r) => (
                   <tr
                     key={r.profile}
-                    className={
-                      r.profile === selectedProfile ? "row-active" : undefined
-                    }
+                    className={selectedMode === r.profile ? "row-active" : undefined}
                   >
                     <td>{PROFILE_LABELS[r.profile]}</td>
                     <td>{(r.distance_m / 1000).toFixed(2)}</td>
                     <td>{(r.duration_s / 60).toFixed(1)}</td>
                   </tr>
                 ))}
+
+                {transitMutation.data && (
+                  <tr
+                    className={selectedMode === "transit" ? "row-active" : undefined}
+                  >
+                    <td>Transporte público</td>
+                    <td>{(transitMutation.data.distance_m / 1000).toFixed(2)}</td>
+                    <td>{(transitMutation.data.duration_s / 60).toFixed(1)}</td>
+                  </tr>
+                )}
               </tbody>
             </table>
-          )}
+
 
           {/* Bloque de transporte público GTFS */}
           {selectedTransitRouteId && (
