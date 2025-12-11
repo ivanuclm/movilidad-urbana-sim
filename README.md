@@ -379,14 +379,3 @@ El siguiente paso natural del TFM es:
    - Permitir comparar escenarios (cambios en frecuencias de bus, carriles bici, etc.) viendo cómo varía la elección modal prevista.
 
 Con esto, el simulador pasará de ser una herramienta descriptiva (rutas y tiempos) a una herramienta **predictiva**, basada en preferencias aprendidas a partir del LPMC.
-
----
-
-## 9. Licencias y agradecimientos
-
-- El dataset **LPMC** pertenece a sus autores y se utiliza únicamente con fines académicos.
-- Se usa **OSRM** (Open Source Routing Machine) bajo licencia BSD.
-- Se usa **OpenTripPlanner (OTP)** bajo licencia LGPL.
-- El código del profesor José Ángel Martín-Baos y coautores ha servido como base para el tratamiento del LPMC y la inspiración del modelo de elección modal.
-
-Este README pretende servir como guía de instalación y como resumen técnico del estado actual del TFM, listo para ser ejecutado y extendido por cualquier persona que quiera reproducir los experimentos o continuar el desarrollo.
