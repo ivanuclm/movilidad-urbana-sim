@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date as Date, datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -59,6 +60,21 @@ class RouteDetails(BaseModel):
     shape: Optional[List[Point]] = None
 
 
+class DirectionSchedule(BaseModel):
+    direction_id: Optional[int] = None
+    headsign: Optional[str] = None
+    trip_count: int
+    first_departure: Optional[str] = None
+    last_departure: Optional[str] = None
+    departures: List[str]
+
+
+class RouteSchedule(BaseModel):
+    route_id: str
+    date: str
+    directions: List[DirectionSchedule]
+
+
 # -----------------------
 # Endpoints
 # -----------------------
@@ -73,15 +89,13 @@ def get_stops(
 ):
     """
     Lista de paradas GTFS.
-
-    - Si no se pasa bounding-box, devuelve hasta `limit` paradas.
-    - Si se pasa min_lat/max_lat/min_lon/max_lon, filtra por esa zona.
     """
     bbox = None
     if None not in (min_lat, max_lat, min_lon, max_lon):
         bbox = (min_lat, max_lat, min_lon, max_lon)
 
     stops_raw = gtfs_loader.list_stops(limit=limit, bbox=bbox)
+    stop_routes_index = gtfs_loader.GTFS_DATA.stop_routes
 
     return [
         GtfsStop(
@@ -94,11 +108,11 @@ def get_stops(
             wheelchair_boarding=s.get("wheelchair_boarding"),
             routes=[
                 StopRoute(
-                    id=sr["route_id"],
+                    id=sr["id"],
                     short_name=sr.get("short_name"),
                     long_name=sr.get("long_name"),
                 )
-                for sr in (s.get("routes") or [])
+                for sr in stop_routes_index.get(s["stop_id"], [])
             ],
         )
         for s in stops_raw
@@ -109,9 +123,6 @@ def get_stops(
 def get_routes():
     """
     Lista de rutas/líneas disponibles en el GTFS.
-
-    Ideal para poblar un combo/select en el frontend para el modo
-    "Transporte público".
     """
     routes_raw = gtfs_loader.list_routes()
     return [
@@ -170,3 +181,49 @@ def get_route_details(route_id: str):
         shape = [Point(lat=p["lat"], lon=p["lon"]) for p in geometry_raw]
 
     return RouteDetails(route=route, stops=stops, shape=shape)
+
+
+@router.get("/routes/{route_id}/schedule", response_model=RouteSchedule)
+def get_route_schedule(
+    route_id: str,
+    date: Optional[str] = Query(
+        None,
+        description="Fecha en formato YYYY-MM-DD. Si se omite, se usa la fecha actual del servidor.",
+    ),
+):
+    """
+    Resumen de horarios de una ruta para un día concreto.
+    """
+    if date is None:
+        target_date = datetime.today().date()
+    else:
+        try:
+            target_date = datetime.fromisoformat(date).date()
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="Formato de fecha inválido, usa YYYY-MM-DD",
+            )
+
+    try:
+        raw = gtfs_loader.get_route_schedule(route_id, target_date)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Route not found")
+
+    directions = [
+        DirectionSchedule(
+            direction_id=d.get("direction_id"),
+            headsign=d.get("headsign"),
+            trip_count=d.get("trip_count", 0),
+            first_departure=d.get("first_departure"),
+            last_departure=d.get("last_departure"),
+            departures=d.get("departures") or [],
+        )
+        for d in raw.get("directions", [])
+    ]
+
+    return RouteSchedule(
+        route_id=raw["route_id"],
+        date=raw["date"],
+        directions=directions,
+    )

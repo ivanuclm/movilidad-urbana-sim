@@ -47,6 +47,7 @@ type TransitRouteDetails = {
     color?: string | null;
     text_color?: string | null;
   };
+  // aquí los stops vienen SIN info de rutas, pero nos vale
   stops: (GtfsStop & { sequence: number })[];
   shape?: Point[];
 };
@@ -62,7 +63,25 @@ type TransitRouteListItem = {
   text_color?: string | null;
 };
 
-async function fetchRoutes(origin: Point, destination: Point): Promise<RouteResponse> {
+type TransitDirectionSchedule = {
+  direction_id?: number | null;
+  headsign?: string | null;
+  trip_count: number;
+  first_departure?: string | null;
+  last_departure?: string | null;
+  departures: string[];
+};
+
+type TransitRouteSchedule = {
+  route_id: string;
+  date: string;
+  directions: TransitDirectionSchedule[];
+};
+
+async function fetchRoutes(
+  origin: Point,
+  destination: Point
+): Promise<RouteResponse> {
   const res = await fetch("http://127.0.0.1:8000/api/osrm/routes", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -87,29 +106,44 @@ const PROFILE_LABELS: Record<Profile, string> = {
 
 function App() {
   const [origin, setOrigin] = useState<Point>({ lat: 39.87029, lon: -4.03434 });
-  const [destination, setDestination] = useState<Point>({ lat: 39.85968, lon: -4.00525 });
+  const [destination, setDestination] = useState<Point>({
+    lat: 39.85968,
+    lon: -4.00525,
+  });
   const [selectedProfile, setSelectedProfile] = useState<Profile>("driving");
   const [showGtfsStops, setShowGtfsStops] = useState(true);
-  const [selectedTransitRouteId, setSelectedTransitRouteId] = useState<string | null>(null);
+  const [selectedTransitRouteId, setSelectedTransitRouteId] = useState<
+    string | null
+  >(null);
 
-  // OSRM
+  // fecha por defecto = hoy (YYYY-MM-DD)
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const [scheduleDate, setScheduleDate] = useState<string>(todayStr);
+
+  // ---------------- OSRM ----------------
+
   const { mutate, data, isPending, error } = useMutation<RouteResponse, Error>({
     mutationFn: () => fetchRoutes(origin, destination),
   });
+
   const selectedRoute =
     data?.results.find((r) => r.profile === selectedProfile) ?? null;
 
-  // Paradas GTFS (todas)
+  // ------------- GTFS: paradas -------------
+
   const gtfsStopsQuery = useQuery<GtfsStop[]>({
     queryKey: ["gtfs-stops"],
     queryFn: async () => {
-      const res = await fetch("http://127.0.0.1:8000/api/gtfs/stops?limit=5000");
+      const res = await fetch(
+        "http://127.0.0.1:8000/api/gtfs/stops?limit=5000"
+      );
       if (!res.ok) throw new Error("Error cargando paradas GTFS");
       return res.json();
     },
   });
 
-  // Lista de rutas GTFS
+  // ------------- GTFS: lista de rutas -------------
+
   const gtfsRoutesQuery = useQuery<TransitRouteListItem[]>({
     queryKey: ["gtfs-routes"],
     queryFn: async () => {
@@ -119,7 +153,8 @@ function App() {
     },
   });
 
-  // Detalle de la ruta GTFS seleccionada
+  // ------------- GTFS: detalles de la ruta seleccionada -------------
+
   const transitRouteDetailsQuery = useQuery<TransitRouteDetails>({
     queryKey: ["gtfs-route-details", selectedTransitRouteId],
     enabled: !!selectedTransitRouteId,
@@ -135,13 +170,34 @@ function App() {
   const transitShape = transitRouteDetailsQuery.data?.shape ?? [];
   const transitRouteStops = transitRouteDetailsQuery.data?.stops ?? [];
 
+  // ------------- GTFS: horarios de la ruta seleccionada -------------
+
+  const transitScheduleQuery = useQuery<TransitRouteSchedule>({
+    queryKey: ["gtfs-route-schedule", selectedTransitRouteId, scheduleDate],
+    enabled: !!selectedTransitRouteId,
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (scheduleDate) {
+        params.set("date", scheduleDate);
+      }
+      const res = await fetch(
+        `http://127.0.0.1:8000/api/gtfs/routes/${selectedTransitRouteId}/schedule?${params.toString()}`
+      );
+      if (!res.ok) throw new Error("Error cargando horarios GTFS");
+      return res.json();
+    },
+  });
+
+  const stripSeconds = (t?: string | null) =>
+    t && t.length >= 5 ? t.slice(0, 5) : t ?? "";
+
   return (
     <div className="app-root">
       <header className="app-header">
         <h1 className="app-header-title">Simulador de movilidad urbana</h1>
         <p className="app-header-subtitle">
-          Haz clic en el mapa para colocar origen y destino (alternando). Luego pulsa en
-          <strong> "Calcular rutas"</strong>.
+          Haz clic en el mapa para colocar origen y destino (alternando). Luego
+          pulsa en<strong> "Calcular rutas"</strong>.
         </p>
       </header>
 
@@ -204,10 +260,7 @@ function App() {
             >
               <option value="">(ninguna seleccionada)</option>
               {gtfsRoutesQuery.data?.map((r) => {
-                const label =
-                  r.short_name ||
-                  r.long_name ||
-                  r.id;
+                const label = r.short_name || r.long_name || r.id;
                 return (
                   <option key={r.id} value={r.id}>
                     {label}
@@ -216,7 +269,9 @@ function App() {
               })}
             </select>
             {gtfsRoutesQuery.isLoading && (
-              <p style={{ fontSize: "0.8rem", color: "#6b7280" }}>Cargando líneas…</p>
+              <p style={{ fontSize: "0.8rem", color: "#6b7280" }}>
+                Cargando líneas…
+              </p>
             )}
             {gtfsRoutesQuery.error && (
               <p className="error-text">Error cargando rutas GTFS.</p>
@@ -280,31 +335,124 @@ function App() {
             </table>
           )}
 
+          {/* Bloque de transporte público GTFS */}
           {selectedTransitRouteId && (
             <div className="transit-summary">
               <h3>Transporte público (GTFS)</h3>
-              {transitRouteDetailsQuery.isLoading && <p>Cargando ruta…</p>}
-              {transitRouteDetailsQuery.error && (
-                <p className="error-text">
-                  Error cargando ruta GTFS seleccionada
+
+              {transitRouteDetailsQuery.data && (
+                <p>
+                  Ruta:{" "}
+                  <strong>
+                    {transitRouteDetailsQuery.data.route.short_name ||
+                      transitRouteDetailsQuery.data.route.long_name ||
+                      transitRouteDetailsQuery.data.route.id}
+                  </strong>{" "}
+                  ({transitRouteStops.length} paradas)
                 </p>
               )}
-              {transitRouteDetailsQuery.data && (
+
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.5rem",
+                  margin: "0.5rem 0",
+                }}
+              >
+                <label
+                  htmlFor="schedule-date"
+                  style={{ fontSize: "0.85rem", color: "#4b5563" }}
+                >
+                  Fecha:
+                </label>
+                <input
+                  id="schedule-date"
+                  type="date"
+                  value={scheduleDate}
+                  onChange={(e) => setScheduleDate(e.target.value)}
+                />
+              </div>
+
+              {transitScheduleQuery.isLoading && <p>Cargando horarios…</p>}
+              {transitScheduleQuery.error && (
+                <p className="error-text">
+                  Error cargando horarios de la ruta seleccionada.
+                </p>
+              )}
+
+              {transitScheduleQuery.data && (
                 <>
-                  <p>
-                    Ruta:{" "}
-                    <strong>
-                      {transitRouteDetailsQuery.data.route.short_name ||
-                        transitRouteDetailsQuery.data.route.long_name ||
-                        transitRouteDetailsQuery.data.route.id}
-                    </strong>{" "}
-                    ({transitRouteStops.length} paradas)
-                  </p>
-                  <p style={{ fontSize: "0.85rem", color: "#4b5563" }}>
-                    Puedes seleccionar otra ruta desde el mapa (clic en una
-                    parada) o desde el desplegable superior.
-                  </p>
+                  {transitScheduleQuery.data.directions.length === 0 ? (
+                    <p style={{ fontSize: "0.85rem", color: "#4b5563" }}>
+                      No hay servicios programados para esta fecha.
+                    </p>
+                  ) : (
+                    <div style={{ marginTop: "0.5rem" }}>
+                      {transitScheduleQuery.data.directions.map((dir, idx) => {
+                        const sample = dir.departures.slice(0, 10);
+                        const remaining =
+                          dir.departures.length - sample.length;
+
+                        return (
+                          <div
+                            key={dir.direction_id ?? idx}
+                            style={{
+                              marginBottom: "0.5rem",
+                              padding: "0.4rem 0.6rem",
+                              borderRadius: "0.4rem",
+                              background: "#f9fafb",
+                            }}
+                          >
+                            <div
+                              style={{
+                                fontWeight: 600,
+                                marginBottom: "0.25rem",
+                              }}
+                            >
+                              Sentido{" "}
+                              {dir.headsign ||
+                                (dir.direction_id !== undefined &&
+                                  dir.direction_id !== null &&
+                                  `(${dir.direction_id})`) ||
+                                ""}
+                            </div>
+                            <div
+                              style={{
+                                fontSize: "0.8rem",
+                                color: "#4b5563",
+                                marginBottom: "0.25rem",
+                              }}
+                            >
+                              Viajes: {dir.trip_count}. Primera salida:{" "}
+                              {stripSeconds(dir.first_departure)}. Última
+                              salida: {stripSeconds(dir.last_departure)}.
+                            </div>
+                            <div
+                              style={{
+                                fontSize: "0.8rem",
+                                color: "#374151",
+                              }}
+                            >
+                              Salidas:{" "}
+                              {sample
+                                .map((t) => stripSeconds(t))
+                                .join(" · ")}
+                              {remaining > 0 && ` … (+${remaining} más)`}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </>
+              )}
+
+              {transitRouteDetailsQuery.data && (
+                <p style={{ fontSize: "0.8rem", color: "#6b7280" }}>
+                  Puedes seleccionar otra ruta desde el mapa (clic en una
+                  parada) o desde el desplegable superior.
+                </p>
               )}
             </div>
           )}

@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass
+from datetime import date as Date
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Set
 
 
-# Ajusta esta ruta si tu GTFS está en otra carpeta.
-# Asumo: backend/data/gtfs/ con los .txt sueltos (agency, routes, stops, trips, stop_times, shapes, calendar_dates)
 DEFAULT_GTFS_DIR = (
     Path(__file__).resolve().parents[2] / "data" / "gtfs" / "GTFS_Urbano_Toledo"
 )
@@ -22,6 +21,11 @@ class GtfsData:
     trips_by_route: Dict[str, List[dict]]
     stop_times_by_trip: Dict[str, List[dict]]
     shapes_by_id: Dict[str, List[Tuple[float, float, int]]]
+    # índice parada -> lista de rutas (sin duplicados)
+    stop_routes: Dict[str, List[dict]]
+    # calendario: service_id -> fechas con servicio / sin servicio (YYYYMMDD)
+    service_added_dates: Dict[str, Set[str]]
+    service_removed_dates: Dict[str, Set[str]]
 
 
 def _read_csv(path: Path) -> List[dict]:
@@ -34,13 +38,7 @@ def _read_csv(path: Path) -> List[dict]:
 
 def load_gtfs_data(gtfs_dir: Optional[Path] = None) -> GtfsData:
     """
-    Carga el GTFS estático en memoria.
-
-    Pensado para feeds tipo Toledo:
-    - stops.txt: stop_id, stop_name, stop_desc, stop_lat, stop_lon, wheelchair_boarding
-      (no hay stop_code, así que lo tratamos como opcional)
-    - shapes.txt: shape_id, shape_pt_lat, shape_pt_lon, shape_pt_sequence
-      (sin shape_dist_traveled, que es opcional en GTFS)
+    Carga el GTFS estático en memoria (formato tipo Toledo).
     """
     base = gtfs_dir or DEFAULT_GTFS_DIR
 
@@ -49,19 +47,23 @@ def load_gtfs_data(gtfs_dir: Optional[Path] = None) -> GtfsData:
     trips_raw = _read_csv(base / "trips.txt")
     stop_times_raw = _read_csv(base / "stop_times.txt")
     shapes_raw = _read_csv(base / "shapes.txt")
+    try:
+        calendar_dates_raw = _read_csv(base / "calendar_dates.txt")
+    except FileNotFoundError:
+        calendar_dates_raw = []
 
+    # -----------------------
     # Stops por stop_id
+    # -----------------------
     stops: Dict[str, dict] = {}
     for row in stops_raw:
         stop_id = row["stop_id"]
-        # Normalizamos nombres de campos que vamos a usar en la API
         stops[stop_id] = {
             "stop_id": stop_id,
             "name": row.get("stop_name"),
             "desc": row.get("stop_desc") or None,
             "lat": float(row["stop_lat"]),
             "lon": float(row["stop_lon"]),
-            # Algunos GTFS traen stop_code, el de Toledo no
             "code": row.get("stop_code") or stop_id,
             "wheelchair_boarding": (
                 int(row["wheelchair_boarding"])
@@ -70,7 +72,9 @@ def load_gtfs_data(gtfs_dir: Optional[Path] = None) -> GtfsData:
             ),
         }
 
+    # -----------------------
     # Rutas por route_id
+    # -----------------------
     routes: Dict[str, dict] = {}
     for row in routes_raw:
         route_id = row["route_id"]
@@ -85,7 +89,9 @@ def load_gtfs_data(gtfs_dir: Optional[Path] = None) -> GtfsData:
             "text_color": row.get("route_text_color") or None,
         }
 
+    # -----------------------
     # Trips agrupados por route_id
+    # -----------------------
     trips_by_route: Dict[str, List[dict]] = {}
     for row in trips_raw:
         route_id = row["route_id"]
@@ -102,7 +108,9 @@ def load_gtfs_data(gtfs_dir: Optional[Path] = None) -> GtfsData:
             }
         )
 
+    # -----------------------
     # Stop times agrupados por trip_id
+    # -----------------------
     stop_times_by_trip: Dict[str, List[dict]] = {}
     for row in stop_times_raw:
         trip_id = row["trip_id"]
@@ -127,39 +135,55 @@ def load_gtfs_data(gtfs_dir: Optional[Path] = None) -> GtfsData:
     for trip_id, lst in stop_times_by_trip.items():
         lst.sort(key=lambda x: x["sequence"])
 
-    
+    # -----------------------
+    # Índice stop -> rutas (sin duplicados)
+    # -----------------------
     # trip_id -> route_id para lookup rápido
     trip_to_route: Dict[str, str] = {}
     for route_id, trip_list in trips_by_route.items():
         for trip in trip_list:
             trip_to_route[trip["trip_id"]] = route_id
 
-    # stop_id -> set(route_id)
-    stop_routes: Dict[str, set[str]] = {sid: set() for sid in stops.keys()}
+    # stop_id -> dict(route_id -> route_meta)
+    stop_routes_map: Dict[str, Dict[str, dict]] = {}
+
     for trip_id, st_list in stop_times_by_trip.items():
         route_id = trip_to_route.get(trip_id)
         if not route_id:
             continue
+
+        route_meta = routes.get(route_id)
+        if not route_meta:
+            continue
+
         for st in st_list:
             sid = st["stop_id"]
-            if sid in stop_routes:
-                stop_routes[sid].add(route_id)
+            if sid not in stop_routes_map:
+                stop_routes_map[sid] = {}
 
-    # Adjuntamos info de rutas a cada parada
-    for sid, stop in stops.items():
-        route_ids = sorted(stop_routes.get(sid, []))
-        stop["routes"] = [
-            {
-                "route_id": rid,
-                "short_name": routes[rid].get("short_name"),
-                "long_name": routes[rid].get("long_name"),
+            if route_id in stop_routes_map[sid]:
+                continue
+
+            stop_routes_map[sid][route_id] = {
+                "id": route_id,
+                "short_name": route_meta.get("short_name"),
+                "long_name": route_meta.get("long_name"),
+                "type": route_meta.get("type"),
+                "color": route_meta.get("color"),
+                "text_color": route_meta.get("text_color"),
             }
-            for rid in route_ids
-            if rid in routes
-        ]
 
+    stop_routes: Dict[str, List[dict]] = {}
+    for sid, rmap in stop_routes_map.items():
+        lst = list(rmap.values())
+        lst.sort(
+            key=lambda r: (r.get("short_name") or r.get("long_name") or r["id"])
+        )
+        stop_routes[sid] = lst
 
+    # -----------------------
     # Shapes agrupados por shape_id
+    # -----------------------
     shapes_by_id: Dict[str, List[Tuple[float, float, int]]] = {}
     for row in shapes_raw:
         shape_id = row["shape_id"]
@@ -168,9 +192,24 @@ def load_gtfs_data(gtfs_dir: Optional[Path] = None) -> GtfsData:
         seq = int(row["shape_pt_sequence"])
         shapes_by_id.setdefault(shape_id, []).append((lat, lon, seq))
 
-    # Ordenamos los puntos de cada shape por sequence
     for shape_id, pts in shapes_by_id.items():
         pts.sort(key=lambda p: p[2])
+
+    # -----------------------
+    # Calendario (calendar_dates.txt)
+    # -----------------------
+    service_added_dates: Dict[str, Set[str]] = {}
+    service_removed_dates: Dict[str, Set[str]] = {}
+
+    for row in calendar_dates_raw:
+        service_id = row["service_id"]
+        date_ymd = row["date"]  # YYYYMMDD
+        exception_type = row["exception_type"]
+
+        if exception_type == "1":  # servicio añadido ese día
+            service_added_dates.setdefault(service_id, set()).add(date_ymd)
+        elif exception_type == "2":  # servicio eliminado ese día
+            service_removed_dates.setdefault(service_id, set()).add(date_ymd)
 
     return GtfsData(
         stops=stops,
@@ -178,6 +217,9 @@ def load_gtfs_data(gtfs_dir: Optional[Path] = None) -> GtfsData:
         trips_by_route=trips_by_route,
         stop_times_by_trip=stop_times_by_trip,
         shapes_by_id=shapes_by_id,
+        stop_routes=stop_routes,
+        service_added_dates=service_added_dates,
+        service_removed_dates=service_removed_dates,
     )
 
 
@@ -186,7 +228,7 @@ GTFS_DATA = load_gtfs_data()
 
 
 # -----------------------
-# Funciones de consulta
+# Funciones auxiliares
 # -----------------------
 
 def list_stops(
@@ -225,12 +267,6 @@ def get_route_with_stops(route_id: str) -> Tuple[dict, List[dict], Optional[List
     - info de la ruta (routes.txt)
     - lista de paradas ordenadas para un viaje representativo
     - geometría aproximada de la línea (shape) si existe
-
-    Estrategia:
-    - Cogemos el primer trip de ese route_id.
-    - Ordenamos sus stop_times por stop_sequence.
-    - Obtenemos las paradas de stops.txt.
-    - Si el trip tiene shape_id y existe en shapes.txt, devolvemos la polyline.
     """
     route = GTFS_DATA.routes.get(route_id)
     if not route:
@@ -238,10 +274,8 @@ def get_route_with_stops(route_id: str) -> Tuple[dict, List[dict], Optional[List
 
     trips = GTFS_DATA.trips_by_route.get(route_id) or []
     if not trips:
-        # Ruta sin trips (poco probable pero puede pasar)
         return route, [], None
 
-    # Por simplicidad, usamos el primer trip (ya lo refinaremos si hace falta)
     trip = trips[0]
     trip_id = trip["trip_id"]
     shape_id = trip.get("shape_id")
@@ -270,3 +304,112 @@ def get_route_with_stops(route_id: str) -> Tuple[dict, List[dict], Optional[List
         geometry = [{"lat": lat, "lon": lon} for (lat, lon, _seq) in pts]
 
     return route, route_stops, geometry
+
+
+# --------- calendario + horarios ---------
+
+def _service_runs_on_date(service_id: Optional[str], date_ymd: str) -> bool:
+    """
+    Determina si un service_id opera en una fecha concreta (YYYYMMDD).
+    Si solo hay calendar_dates, tomamos exception_type=1 como "días con servicio".
+    """
+    if not service_id:
+        # Si el GTFS no define service_id para un trip, asumimos que opera siempre.
+        return True
+
+    added = GTFS_DATA.service_added_dates.get(service_id, set())
+    removed = GTFS_DATA.service_removed_dates.get(service_id, set())
+
+    if added or removed:
+        if date_ymd in removed:
+            return False
+        return date_ymd in added
+
+    # Sin info en calendar_dates, asumimos que opera todos los días.
+    return True
+
+
+def _time_to_seconds(t: str) -> int:
+    """
+    Convierte 'HH:MM:SS' (incluso con horas >24) a segundos.
+    """
+    h, m, s = t.split(":")
+    return int(h) * 3600 + int(m) * 60 + int(s)
+
+
+def get_route_schedule(route_id: str, for_date: Date) -> dict:
+    """
+    Devuelve un resumen de horarios de la ruta en una fecha:
+
+    {
+      "route_id": "...",
+      "date": "YYYY-MM-DD",
+      "directions": [
+        {
+          "direction_id": 0,
+          "headsign": "CASCO HISTÓRICO",
+          "trip_count": 20,
+          "first_departure": "06:00:00",
+          "last_departure": "23:30:00",
+          "departures": ["06:00:00", "06:30:00", ...]
+        },
+        ...
+      ]
+    }
+    """
+    if route_id not in GTFS_DATA.routes:
+        raise KeyError(f"Route not found: {route_id}")
+
+    date_ymd = for_date.strftime("%Y%m%d")
+    trips = GTFS_DATA.trips_by_route.get(route_id) or []
+
+    # direction_id -> {"times": [str], "headsign": Optional[str]}
+    dir_data: Dict[Optional[int], dict] = {}
+
+    for trip in trips:
+        service_id = trip.get("service_id")
+        if not _service_runs_on_date(service_id, date_ymd):
+            continue
+
+        trip_id = trip["trip_id"]
+        stop_times = GTFS_DATA.stop_times_by_trip.get(trip_id) or []
+        if not stop_times:
+            continue
+
+        first_st = stop_times[0]
+        t = first_st.get("departure_time") or first_st.get("arrival_time")
+        if not t:
+            continue
+
+        direction_id = trip.get("direction_id")
+        info = dir_data.setdefault(
+            direction_id,
+            {"times": [], "headsign": None},
+        )
+
+        if not info["headsign"] and trip.get("headsign"):
+            info["headsign"] = trip["headsign"]
+
+        info["times"].append(t)
+
+    directions: List[dict] = []
+    for direction_id, info in dir_data.items():
+        if not info["times"]:
+            continue
+        times_sorted = sorted(info["times"], key=_time_to_seconds)
+        directions.append(
+            {
+                "direction_id": direction_id,
+                "headsign": info["headsign"],
+                "trip_count": len(times_sorted),
+                "first_departure": times_sorted[0],
+                "last_departure": times_sorted[-1],
+                "departures": times_sorted,
+            }
+        )
+
+    return {
+        "route_id": route_id,
+        "date": for_date.isoformat(),
+        "directions": directions,
+    }
