@@ -383,13 +383,25 @@ function App() {
             >
               <option value="">(ninguna seleccionada)</option>
               {gtfsRoutesQuery.data?.map((r) => {
-                const label = r.short_name || r.long_name || r.id;
+                let label: string;
+
+                if (r.short_name && r.long_name) {
+                  label = `${r.short_name} - ${r.long_name}`;
+                } else if (r.short_name) {
+                  label = r.short_name;
+                } else if (r.long_name) {
+                  label = r.long_name;
+                } else {
+                  label = r.id;
+                }
+
                 return (
                   <option key={r.id} value={r.id}>
                     {label}
                   </option>
                 );
               })}
+
             </select>
             {gtfsRoutesQuery.isLoading && (
               <p style={{ fontSize: "0.8rem", color: "#6b7280" }}>

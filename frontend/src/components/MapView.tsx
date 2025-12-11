@@ -294,20 +294,35 @@ export function MapView({
                         gap: "0.25rem",
                       }}
                     >
-                      {s.routes.map((r) => (
-                        <button
-                          key={r.id}
-                          type="button"
-                          className="tooltip-chip"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            onSelectTransitRoute?.(r.id);
-                          }}
-                        >
-                          {r.short_name || r.long_name || r.id}
-                        </button>
-                      ))}
+                      {s.routes.map((r) => {
+                        let label: string;
+
+                        if (r.short_name && r.long_name) {
+                          label = `${r.short_name} - ${r.long_name}`;
+                        } else if (r.short_name) {
+                          label = r.short_name;
+                        } else if (r.long_name) {
+                          label = r.long_name;
+                        } else {
+                          label = r.id;
+                        }
+
+                        return (
+                          <button
+                            key={r.id}
+                            type="button"
+                            className="tooltip-chip"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              onSelectTransitRoute?.(r.id);
+                            }}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+
                     </div>
                   </div>
                 )}
