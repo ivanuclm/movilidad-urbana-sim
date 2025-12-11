@@ -5,23 +5,13 @@ import {
   useMapEvents,
   Polyline,
   CircleMarker,
-  Tooltip,
+  Popup,
 } from "react-leaflet";
 import { useState } from "react";
 import L from "leaflet";
 
 const defaultCenter: [number, number] = [39.86251, -4.02726]; // Centro en Toledo
 
-// Icono clásico de Leaflet (no lo usamos ya para origen/destino, pero lo dejo por si lo quieres reaprovechar)
-const markerIcon = L.icon({
-  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-});
-
-// Icono estilo "pin" verde con ▶ (origen)
 const originIcon = L.divIcon({
   className: "osm-marker",
   html: `
@@ -45,7 +35,6 @@ const originIcon = L.divIcon({
   iconAnchor: [18.75, 40],
 });
 
-// Icono estilo "pin" rojo con ■ (destino)
 const destinationIcon = L.divIcon({
   className: "osm-marker",
   html: `
@@ -92,10 +81,10 @@ interface MapViewProps {
   destination: Point;
   setOrigin: (p: Point) => void;
   setDestination: (p: Point) => void;
-  routeGeometry: Point[];          // Ruta OSRM seleccionada
-  gtfsStops?: GtfsStop[];          // Todas las paradas GTFS
-  transitShape?: Point[];          // Shape de la ruta GTFS seleccionada
-  transitRouteStops?: GtfsStop[];  // Paradas de la ruta GTFS seleccionada
+  routeGeometry: Point[];
+  gtfsStops?: GtfsStop[];
+  transitShape?: Point[];
+  transitRouteStops?: GtfsStop[];
   onSelectTransitRoute?: (routeId: string) => void;
 }
 
@@ -151,33 +140,33 @@ export function MapView({
 
       <ClickHandler setOrigin={setOrigin} setDestination={setDestination} />
 
-      {/* Marcadores de origen y destino */}
+      {/* Origen / destino */}
       <Marker position={[origin.lat, origin.lon]} icon={originIcon} />
       <Marker position={[destination.lat, destination.lon]} icon={destinationIcon} />
 
-      {/* Ruta OSRM seleccionada */}
+      {/* Ruta OSRM */}
       {osrmPolylinePositions.length > 0 && (
         <Polyline positions={osrmPolylinePositions} />
       )}
 
-      {/* Ruta de transporte público seleccionada (GTFS) */}
+      {/* Ruta GTFS seleccionada */}
       {transitPolylinePositions.length > 0 && (
         <Polyline
           positions={transitPolylinePositions}
-          pathOptions={{ color: "#f97316", weight: 4 }} // naranja
+          pathOptions={{ color: "#f97316", weight: 4 }}
         />
       )}
 
-      {/* Todas las paradas GTFS como puntos pequeños */}
+      {/* Paradas GTFS (todas) */}
       {gtfsStops &&
         gtfsStops.map((s) => (
           <CircleMarker
             key={s.id}
             center={[s.lat, s.lon]}
             radius={3}
-            pathOptions={{ color: "#2563eb" }} // azul
+            pathOptions={{ color: "#2563eb" }}
           >
-            <Tooltip>
+            <Popup>
               <div>
                 <strong>{s.name}</strong>
                 {s.code && <div>Código: {s.code}</div>}
@@ -218,11 +207,11 @@ export function MapView({
                   </div>
                 )}
               </div>
-            </Tooltip>
+            </Popup>
           </CircleMarker>
         ))}
 
-      {/* Paradas de la ruta GTFS seleccionada, destacadas */}
+      {/* Paradas de la ruta GTFS seleccionada (resaltadas) */}
       {transitRouteStops &&
         transitRouteStops.map((s) => (
           <CircleMarker

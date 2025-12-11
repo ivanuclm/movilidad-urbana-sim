@@ -51,6 +51,17 @@ type TransitRouteDetails = {
   shape?: Point[];
 };
 
+type TransitRouteListItem = {
+  id: string;
+  short_name?: string;
+  long_name?: string;
+  desc?: string;
+  type?: number;
+  agency_id?: string;
+  color?: string | null;
+  text_color?: string | null;
+};
+
 async function fetchRoutes(origin: Point, destination: Point): Promise<RouteResponse> {
   const res = await fetch("http://127.0.0.1:8000/api/osrm/routes", {
     method: "POST",
@@ -85,7 +96,6 @@ function App() {
   const { mutate, data, isPending, error } = useMutation<RouteResponse, Error>({
     mutationFn: () => fetchRoutes(origin, destination),
   });
-
   const selectedRoute =
     data?.results.find((r) => r.profile === selectedProfile) ?? null;
 
@@ -99,7 +109,17 @@ function App() {
     },
   });
 
-  // Detalles de la ruta GTFS seleccionada (shape + paradas)
+  // Lista de rutas GTFS
+  const gtfsRoutesQuery = useQuery<TransitRouteListItem[]>({
+    queryKey: ["gtfs-routes"],
+    queryFn: async () => {
+      const res = await fetch("http://127.0.0.1:8000/api/gtfs/routes");
+      if (!res.ok) throw new Error("Error cargando rutas GTFS");
+      return res.json();
+    },
+  });
+
+  // Detalle de la ruta GTFS seleccionada
   const transitRouteDetailsQuery = useQuery<TransitRouteDetails>({
     queryKey: ["gtfs-route-details", selectedTransitRouteId],
     enabled: !!selectedTransitRouteId,
@@ -134,7 +154,7 @@ function App() {
             destination={destination}
             setOrigin={setOrigin}
             setDestination={setDestination}
-            routeGeometry={selectedRoute?.geometry ?? []} // OSRM seleccionado
+            routeGeometry={selectedRoute?.geometry ?? []}
             gtfsStops={
               showGtfsStops && gtfsStopsQuery.data ? gtfsStopsQuery.data : []
             }
@@ -146,7 +166,7 @@ function App() {
           />
         </section>
 
-        {/* Columna derecha: panel de modos y tabla */}
+        {/* Columna derecha: panel */}
         <section className="card panel-card">
           <label
             style={{
@@ -163,6 +183,45 @@ function App() {
             />
             Mostrar paradas de transporte público (GTFS Toledo)
           </label>
+
+          {/* Selector de ruta GTFS */}
+          <div style={{ marginBottom: "0.75rem" }}>
+            <label
+              htmlFor="gtfs-route-select"
+              style={{ display: "block", marginBottom: "0.25rem" }}
+            >
+              Línea de transporte público:
+            </label>
+            <select
+              id="gtfs-route-select"
+              value={selectedTransitRouteId ?? ""}
+              onChange={(e) =>
+                setSelectedTransitRouteId(
+                  e.target.value === "" ? null : e.target.value
+                )
+              }
+              style={{ width: "100%", padding: "0.35rem" }}
+            >
+              <option value="">(ninguna seleccionada)</option>
+              {gtfsRoutesQuery.data?.map((r) => {
+                const label =
+                  r.short_name ||
+                  r.long_name ||
+                  r.id;
+                return (
+                  <option key={r.id} value={r.id}>
+                    {label}
+                  </option>
+                );
+              })}
+            </select>
+            {gtfsRoutesQuery.isLoading && (
+              <p style={{ fontSize: "0.8rem", color: "#6b7280" }}>Cargando líneas…</p>
+            )}
+            {gtfsRoutesQuery.error && (
+              <p className="error-text">Error cargando rutas GTFS.</p>
+            )}
+          </div>
 
           <h2 className="section-title">Rutas OSRM</h2>
 
@@ -242,7 +301,8 @@ function App() {
                     ({transitRouteStops.length} paradas)
                   </p>
                   <p style={{ fontSize: "0.85rem", color: "#4b5563" }}>
-                    Seleccionada desde el tooltip de una parada.
+                    Puedes seleccionar otra ruta desde el mapa (clic en una
+                    parada) o desde el desplegable superior.
                   </p>
                 </>
               )}
