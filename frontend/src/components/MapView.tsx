@@ -83,6 +83,13 @@ type TransitLegSegment = {
   geometry: Point[];
 };
 
+type TransitSegment = {
+  mode: string;
+  distance_m: number;
+  duration_s: number;
+  geometry: Point[];
+};
+
 interface MapViewProps {
   origin: Point;
   destination: Point;
@@ -93,8 +100,9 @@ interface MapViewProps {
   transitShape?: Point[];
   transitRouteStops?: GtfsStop[];
   onSelectTransitRoute?: (routeId: string) => void;
-  transitSegments?: TransitLegSegment[];
+  transitSegments?: TransitSegment[];
 }
+
 
 function ClickHandler({
   setOrigin,
@@ -132,6 +140,7 @@ export function MapView({
   onSelectTransitRoute,
   transitSegments,
 }: MapViewProps) {
+
   const osrmPolylinePositions = routeGeometry.map(
     (p) => [p.lat, p.lon] as [number, number]
   );

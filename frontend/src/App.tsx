@@ -17,11 +17,20 @@ type TransitLegSegment = {
   geometry: Point[];
 };
 
+type TransitSegment = {
+  mode: string;
+  distance_m: number;
+  duration_s: number;
+  geometry: Point[];
+};
+
 type TransitResult = {
   distance_m: number;
   duration_s: number;
   geometry: Point[];         // ruta completa
-  segments: TransitLegSegment[];
+  segments: TransitSegment[];
+  itinerary_index: number;
+  total_itineraries: number;
 };
 
 type TransitRouteResponse = {
@@ -123,12 +132,18 @@ async function fetchRoutes(
 
 async function fetchTransitRoute(
   origin: Point,
-  destination: Point
+  destination: Point,
+  itineraryIndex?: number | null
 ): Promise<TransitResult> {
+  const payload: any = { origin, destination };
+  if (typeof itineraryIndex === "number") {
+    payload.itinerary_index = itineraryIndex;
+  }
+
   const res = await fetch("http://127.0.0.1:8000/api/otp/routes", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ origin, destination }),
+    body: JSON.stringify(payload),
   });
 
   if (!res.ok) {
@@ -154,6 +169,7 @@ function App() {
   });
   // const [selectedProfile, setSelectedProfile] = useState<Profile>("driving");
   const [selectedMode, setSelectedMode] = useState<UiMode>("driving");
+  const [transitItineraryIndex, setTransitItineraryIndex] = useState(0);
 
   const [showGtfsStops, setShowGtfsStops] = useState(true);
   const [selectedTransitRouteId, setSelectedTransitRouteId] = useState<
@@ -174,8 +190,8 @@ function App() {
     mutationFn: () => fetchRoutes(origin, destination),
   });
 
-  const transitMutation = useMutation<TransitResult, Error>({
-    mutationFn: () => fetchTransitRoute(origin, destination),
+  const transitMutation = useMutation<TransitResult, Error, number | null>({
+    mutationFn: (idxOverride) => fetchTransitRoute(origin, destination, idxOverride ?? transitItineraryIndex),
   });
 
   const isCalculating =
@@ -194,6 +210,7 @@ function App() {
     : null;
 
   const transitResult = transitMutation.data ?? null;
+  const totalItineraries = transitResult?.total_itineraries ?? 0;
 
 
   const displayedGeometry: Point[] =
@@ -388,7 +405,9 @@ function App() {
           <button
             onClick={() => {
               osrmMutation.mutate();
-              transitMutation.mutate();
+              // transitMutation.mutate();
+              setTransitItineraryIndex(0);
+              transitMutation.mutate(0);
             }}
             disabled={isCalculating}
             className="primary-button"
@@ -439,6 +458,53 @@ function App() {
                 )}
               </tbody>
             </table>
+
+            {transitResult && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.5rem",
+                  marginTop: "0.5rem",
+                  fontSize: "0.85rem",
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (transitItineraryIndex <= 0) return;
+                    const next = transitItineraryIndex - 1;
+                    setTransitItineraryIndex(next);
+                    transitMutation.mutate(next);
+                  }}
+                  disabled={transitItineraryIndex <= 0 || transitMutation.isPending}
+                >
+                  ◀ Anterior
+                </button>
+
+                <span>
+                  Itinerario {transitItineraryIndex + 1} de {totalItineraries || "?"}
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!totalItineraries) return;
+                    if (transitItineraryIndex >= totalItineraries - 1) return;
+                    const next = transitItineraryIndex + 1;
+                    setTransitItineraryIndex(next);
+                    transitMutation.mutate(next);
+                  }}
+                  disabled={
+                    !totalItineraries ||
+                    transitItineraryIndex >= totalItineraries - 1 ||
+                    transitMutation.isPending
+                  }
+                >
+                  Siguiente ▶
+                </button>
+              </div>
+            )}
 
 
           {/* Bloque de transporte público GTFS */}

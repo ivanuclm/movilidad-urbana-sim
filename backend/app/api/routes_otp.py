@@ -1,9 +1,7 @@
 # backend/app/api/routes_otp.py
 
-from __future__ import annotations
-
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 import httpx
 import polyline
@@ -12,6 +10,7 @@ from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/otp", tags=["otp"])
 
+# Si lo tienes en otro puerto, ajusta aquí (tú usas 8080)
 OTP_PLAN_URL = "http://localhost:8080/otp/routers/default/plan"
 
 
@@ -23,6 +22,8 @@ class Point(BaseModel):
 class OtpRouteRequest(BaseModel):
     origin: Point
     destination: Point
+    # índice de itinerario opcional (para paginar desde el frontend)
+    itinerary_index: Optional[int] = None
 
 
 class TransitSegment(BaseModel):
@@ -35,8 +36,10 @@ class TransitSegment(BaseModel):
 class TransitResult(BaseModel):
     distance_m: float
     duration_s: float
-    geometry: List[Point]
-    segments: List[TransitSegment]
+    geometry: List[Point]          # ruta completa concatenada
+    segments: List[TransitSegment] # tramos por modo
+    itinerary_index: int
+    total_itineraries: int
 
 
 class TransitRouteResponse(BaseModel):
@@ -45,22 +48,28 @@ class TransitRouteResponse(BaseModel):
     result: TransitResult
 
 
-def _build_otp_params(origin: Point, destination: Point) -> dict:
+def _build_otp_params(req: OtpRouteRequest) -> dict:
     now = datetime.now()
     return {
-        "fromPlace": f"{origin.lat},{origin.lon}",
-        "toPlace": f"{destination.lat},{destination.lon}",
+        "fromPlace": f"{req.origin.lat},{req.origin.lon}",
+        "toPlace": f"{req.destination.lat},{req.destination.lon}",
         "mode": "TRANSIT,WALK",
         "date": now.strftime("%Y-%m-%d"),
         "time": now.strftime("%H:%M"),
         "numItineraries": 5,
-        "maxWalkDistance": 2000,
-        "walkReluctance": 3.0,
+        # intentamos favorecer el bus frente a ir completamente a pie
+        "maxWalkDistance": 2000,      # en metros
+        "walkReluctance": 3.0,        # >1 penaliza caminar
         "locale": "es",
     }
 
 
-def _pick_itinerary_with_transit(itineraries: list[dict]) -> dict:
+def _pick_itinerary_with_transit(itineraries: list[dict]) -> int:
+    """
+    Devuelve el índice de la primera itinerary que tenga al menos un leg
+    de transporte público. Si no hay ninguna, devuelve 0.
+    """
+
     def has_transit(it: dict) -> bool:
         for leg in it.get("legs", []):
             if leg.get("transitLeg"):
@@ -70,24 +79,45 @@ def _pick_itinerary_with_transit(itineraries: list[dict]) -> dict:
                 return True
         return False
 
-    for it in itineraries:
+    for idx, it in enumerate(itineraries):
         if has_transit(it):
-            return it
+            return idx
 
-    return itineraries[0]
+    return 0
 
 
-def _decode_leg_geometry(leg: dict) -> List[Point]:
+def _decode_leg_geometry(leg: dict) -> list[Point]:
     geom = leg.get("legGeometry")
     if not geom or not geom.get("points"):
         return []
-    coords = polyline.decode(geom["points"])  # [(lat, lon), ...]
+    coords = polyline.decode(geom["points"])
     return [Point(lat=lat, lon=lon) for (lat, lon) in coords]
+
+
+def _build_segments(itinerary: dict) -> List[TransitSegment]:
+    segments: List[TransitSegment] = []
+
+    for leg in itinerary.get("legs", []):
+        geometry = _decode_leg_geometry(leg)
+        mode = (leg.get("mode") or "").upper()
+        distance_m = float(leg.get("distance") or 0.0)
+        duration_s = float(leg.get("duration") or 0.0)
+
+        segments.append(
+            TransitSegment(
+                mode=mode,
+                distance_m=distance_m,
+                duration_s=duration_s,
+                geometry=geometry,
+            )
+        )
+
+    return segments
 
 
 @router.post("/routes", response_model=TransitRouteResponse)
 async def get_otp_route(req: OtpRouteRequest) -> TransitRouteResponse:
-    params = _build_otp_params(req.origin, req.destination)
+    params = _build_otp_params(req)
 
     async with httpx.AsyncClient() as client:
         resp = await client.get(OTP_PLAN_URL, params=params, timeout=20.0)
@@ -105,38 +135,28 @@ async def get_otp_route(req: OtpRouteRequest) -> TransitRouteResponse:
     if not itineraries:
         raise HTTPException(status_code=404, detail="OTP no ha encontrado rutas")
 
-    chosen = _pick_itinerary_with_transit(itineraries)
-    legs = chosen.get("legs", []) or []
-
-    segments: List[TransitSegment] = []
-    full_geometry: List[Point] = []
-
-    for leg in legs:
-        pts = _decode_leg_geometry(leg)
-        if not pts:
-            continue
-
-        mode = (leg.get("mode") or "").upper()
-        distance_m = float(leg.get("distance") or 0.0)
-        duration_s = float(leg.get("duration") or 0.0)
-
-        segments.append(
-            TransitSegment(
-                mode=mode,
-                distance_m=distance_m,
-                duration_s=duration_s,
-                geometry=pts,
-            )
-        )
-        full_geometry.extend(pts)
-
-    # fallback por si por algún motivo no hay segmentos con geometría
-    if not segments:
-        distance_m = float(sum(float(leg.get("distance") or 0.0) for leg in legs))
-        duration_s = float(chosen.get("duration") or 0.0)
+    # Elegimos índice de itinerario
+    if req.itinerary_index is not None and 0 <= req.itinerary_index < len(itineraries):
+        idx = req.itinerary_index
     else:
-        distance_m = sum(seg.distance_m for seg in segments)
-        duration_s = sum(seg.duration_s for seg in segments)
+        idx = _pick_itinerary_with_transit(itineraries)
+
+    chosen = itineraries[idx]
+
+    # duración total en segundos
+    duration_s = float(chosen.get("duration") or 0.0)
+
+    # distancia = suma de distancias de los legs
+    distance_m = float(
+        sum(float(leg.get("distance") or 0.0) for leg in chosen.get("legs", []))
+    )
+
+    segments = _build_segments(chosen)
+
+    # geometría completa = concatenación de los segmentos
+    full_geometry: list[Point] = []
+    for seg in segments:
+        full_geometry.extend(seg.geometry)
 
     return TransitRouteResponse(
         origin=req.origin,
@@ -146,5 +166,7 @@ async def get_otp_route(req: OtpRouteRequest) -> TransitRouteResponse:
             duration_s=duration_s,
             geometry=full_geometry,
             segments=segments,
+            itinerary_index=idx,
+            total_itineraries=len(itineraries),
         ),
     )
