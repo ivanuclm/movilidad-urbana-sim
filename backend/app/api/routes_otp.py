@@ -31,6 +31,14 @@ class TransitSegment(BaseModel):
     distance_m: float
     duration_s: float
     geometry: List[Point]
+    route_id: str | None = None
+    route_short_name: str | None = None
+    route_long_name: str | None = None
+    agency_name: str | None = None
+    from_stop_name: str | None = None
+    to_stop_name: str | None = None
+    departure: str | None = None    # "HH:MM"
+    arrival: str | None = None      # "HH:MM"
 
 
 class TransitResult(BaseModel):
@@ -47,6 +55,14 @@ class TransitRouteResponse(BaseModel):
     destination: Point
     result: TransitResult
 
+def _ms_to_hhmm(ms: int | float | None) -> str | None:
+    if not ms:
+        return None
+    try:
+        dt = datetime.fromtimestamp(ms / 1000.0)
+        return dt.strftime("%H:%M")
+    except Exception:
+        return None
 
 def _build_otp_params(req: OtpRouteRequest) -> dict:
     now = datetime.now()
@@ -103,16 +119,34 @@ def _build_segments(itinerary: dict) -> List[TransitSegment]:
         distance_m = float(leg.get("distance") or 0.0)
         duration_s = float(leg.get("duration") or 0.0)
 
-        segments.append(
-            TransitSegment(
-                mode=mode,
-                distance_m=distance_m,
-                duration_s=duration_s,
-                geometry=geometry,
+        # Datos base del segmento
+        seg_kwargs: dict = {
+            "mode": mode,
+            "distance_m": distance_m,
+            "duration_s": duration_s,
+            "geometry": geometry,
+        }
+
+        # Si es leg de transporte público, añadimos info de línea, paradas y horas
+        if leg.get("transitLeg"):
+            from_place = leg.get("from") or {}
+            to_place = leg.get("to") or {}
+
+            seg_kwargs.update(
+                route_id=leg.get("routeId") or leg.get("route"),
+                route_short_name=leg.get("routeShortName"),
+                route_long_name=leg.get("routeLongName"),
+                agency_name=leg.get("agencyName"),
+                from_stop_name=from_place.get("name"),
+                to_stop_name=to_place.get("name"),
+                departure=_ms_to_hhmm(leg.get("startTime")),
+                arrival=_ms_to_hhmm(leg.get("endTime")),
             )
-        )
+
+        segments.append(TransitSegment(**seg_kwargs))
 
     return segments
+
 
 
 @router.post("/routes", response_model=TransitRouteResponse)

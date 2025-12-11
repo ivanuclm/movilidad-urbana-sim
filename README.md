@@ -1,459 +1,392 @@
-# Simulador de movilidad urbana (PoC)
+# Simulador web de movilidad urbana – TFM
 
-Prueba de concepto para el Trabajo Fin de Máster sobre un **simulador web de escenarios de movilidad urbana**. El objetivo de esta PoC es disponer de una base técnica sólida:
+Este repositorio contiene el código del Trabajo Fin de Máster orientado al **análisis y simulación de escenarios de movilidad urbana** en la ciudad de Toledo. El sistema integra:
 
-- Backend en **FastAPI** que consulta servicios OSRM (locales y remotos) para distintos modos de transporte.
-- Frontend en **Vite + React + TypeScript** con **Leaflet** para la visualización sobre mapa.
-- Comparación de rutas para **coche, bici y a pie**, con distancias, tiempos e itinerario dibujado en el mapa.
-- Capa adicional de **paradas de transporte público** a partir de un feed **GTFS** real.
+- Un **frontend React + Vite** con mapa interactivo (Leaflet) para fijar origen/destino y explorar rutas.
+- Un **backend FastAPI** que actúa como capa de orquestación sobre:
+  - Tres instancias de **OSRM** en local (coche, bici y a pie).
+  - Una instancia de **OpenTripPlanner (OTP)** en local con la red viaria y el GTFS urbano de Toledo.
+  - Scripts de preprocesado y modelos de **elección modal** entrenados sobre el dataset **LPMC (London Passenger Mode Choice)**.
 
-> ⚠️ Nota: esta PoC no integra todavía el modelo de Machine Learning (LPMC). Se centra en la parte de trayectos y enrutado, y en una primera integración con datos GTFS. El modelo se conectará en fases posteriores del TFM.
-
----
-
-## 1. Arquitectura general
-
-El proyecto está dividido en dos carpetas principales:
-
-- `backend/` – API REST en FastAPI.
-- `frontend/` – aplicación web en React/Vite.
-
-### Backend (FastAPI)
-
-- Framework: **FastAPI** (Python 3.11).
-- Cliente HTTP: **httpx**.
-- Modelos de datos: **Pydantic**.
-- Endpoints principales:
-  - `POST /api/osrm/routes` → cálculo de rutas para coche, bici y a pie.
-  - `GET  /api/gtfs/stops`  → listado de paradas de transporte público desde un feed GTFS.
-
-El endpoint `/api/osrm/routes` recibe un origen, un destino y una lista de perfiles (`driving`, `cycling`, `foot`), y devuelve para cada uno:
-
-- distancia en metros,
-- duración en segundos,
-- geometría de la ruta como lista de puntos `{lat, lon}`.
-
-### Frontend (Vite + React)
-
-- Bundler/dev server: **Vite**.
-- UI: **React** + **TypeScript**.
-- Gestión de peticiones y estado de red: **@tanstack/react-query**.
-- Mapas: **Leaflet** + **react-leaflet**.
-
-La interfaz permite:
-
-1. Hacer clic en el mapa para fijar alternadamente **origen** y **destino**.
-2. Pulsar el botón **“Calcular rutas OSRM”** para consultar el backend.
-3. Visualizar una tabla con distancias y tiempos para coche, bici y a pie.
-4. Seleccionar el modo (Coche/Bici/A pie) y ver la ruta correspondiente dibujada sobre el mapa.
-5. Visualizar paradas de transporte público desde un feed GTFS real (por ejemplo, CRTM).
+El objetivo final es disponer de un simulador capaz de combinar tiempos y distancias reales de red (OSRM/OTP) con preferencias aprendidas a partir del LPMC para estimar qué modo de transporte escogería un usuario en Toledo (walk, cycle, pt, drive).
 
 ---
 
-## 2. Decisiones sobre servicios OSRM
+## 1. Estructura del repositorio
 
-### 2.1. Por qué no usar solo el demoserver oficial de OSRM
-
-Durante las primeras pruebas se utilizó el demoserver oficial de OSRM:
-
-- `https://router.project-osrm.org/route/v1/{profile}/...`
-
-Aunque la API permite indicar distintos perfiles (`driving`, `cycling`, `foot`), la propia comunidad de OSRM indica en sus issues que **el demoserver solo tiene cargado el dataset del perfil de coche**. En la práctica esto se traduce en que:
-
-- las peticiones con `cycling` o `foot` devuelven exactamente la misma distancia y duración que `driving`;
-- por tanto, no sirven para analizar comparativamente distintos modos de transporte, que es justo el objetivo del TFM.
-
-Enlaces de interés:
-
-- https://github.com/Project-OSRM/osrm-backend/issues/4868
-- https://github.com/Project-OSRM/osrm-backend/wiki/Demo-server
-- https://project-osrm.org/docs/v5.5.1/api/#general-options
-
-### 2.2. Uso de `routing.openstreetmap.de`
-
-Para disponer de rutas diferenciadas por modo sin montar todavía una infraestructura propia, se optó inicialmente por usar las instancias OSRM públicas de FOSSGIS:
-
-- `https://routing.openstreetmap.de/routed-car`
-- `https://routing.openstreetmap.de/routed-bike`
-- `https://routing.openstreetmap.de/routed-foot`
-
-Estas instancias:
-
-- exponen la API OSRM v5,
-- cuentan con perfiles separados para coche, bici y peatón,
-- y son suficientes para una PoC académica con tráfico moderado.
-
-### 2.3. Estrategia híbrida: OSRM local para coche, remoto para bici y a pie
-
-Tras validar la PoC, se dio un paso más y se montó una instancia propia de OSRM para el modo **coche**, utilizando:
-
-- un extracto OSM de **Castilla-La Mancha** descargado desde Geofabrik (`castilla-la-mancha-251209.osm.pbf`),
-- la imagen oficial `osrm/osrm-backend`,
-- y el perfil `/opt/car.lua`.
-
-El flujo seguido fue el clásico con Docker:
-
-```bash
-# 1. Extracción (perfil car)
-docker run --rm -t -v "${PWD}:/data" osrm/osrm-backend \
-  osrm-extract -p /opt/car.lua /data/castilla-la-mancha-251209.osm.pbf
-
-# 2. Particionado (MLD)
-docker run --rm -t -v "${PWD}:/data" osrm/osrm-backend \
-  osrm-partition /data/castilla-la-mancha-251209.osrm
-
-# 3. Customización de pesos
-docker run --rm -t -v "${PWD}:/data" osrm/osrm-backend \
-  osrm-customize /data/castilla-la-mancha-251209.osrm
-
-# 4. Servidor OSRM local
-docker run -t --name osrm-car-clm -p 5000:5000 -v "${PWD}:/data" osrm/osrm-backend \
-  osrm-routed --algorithm mld /data/castilla-la-mancha-251209.osrm
-```
-
-Con esto, la PoC utiliza ahora una **estrategia híbrida**:
-
-- `driving` → OSRM local (Castilla-La Mancha) en `http://127.0.0.1:5000`.
-- `cycling` y `foot` → `https://routing.openstreetmap.de/routed-bike` y `.../routed-foot` respectivamente.
-
-Esta combinación mantiene:
-
-- control total sobre coche (modo central en muchos escenarios de movilidad),
-- y cobertura amplia para bici y a pie sin necesidad de montar más contenedores.
-
-A nivel de código, estas decisiones están encapsuladas en `app/services/osrm_client.py`, donde se define un diccionario `OSRM_BASE_URLS` por perfil. Cambiar de estrategia (por ejemplo, montar también bici y pie en local o volver temporalmente al servicio remoto) se reduce a modificar esas URLs base.
-
-### 2.4. Consideraciones éticas y de buen uso
-
-`routing.openstreetmap.de` es una infraestructura comunitaria mantenida por FOSSGIS. En este TFM:
-
-- el uso es moderado y de carácter académico;
-- se evita lanzar experimentos masivos que pudieran sobrecargar el servicio;
-- el modo que previsiblemente generará más tráfico (coche) se ha migrado a una instancia local propia;
-- en caso de necesitar un volumen mayor para bici y pie, se valorará montar instancias OSRM específicas o usar otras soluciones dedicadas.
-
-Este enfoque respeta el espíritu colaborativo de la comunidad OpenStreetMap y alinea el proyecto con buenas prácticas en el uso de recursos compartidos.
-
----
-
-## 3. Integración inicial con GTFS
-
-Como primera aproximación a los datos de transporte público, el backend incluye un servicio de lectura de feeds **GTFS** (General Transit Feed Specification). En la PoC se ha utilizado un feed del **Consorcio Regional de Transportes de Madrid (CRTM)** para autobuses urbanos de la Comunidad de Madrid, aunque la lógica es reutilizable para otros feeds (por ejemplo, uno específico de Ciudad Real).
-
-### 3.1. Colocación del feed GTFS
-
-Se espera que el fichero ZIP GTFS esté en:
+A alto nivel la estructura relevante es:
 
 ```text
-backend/data/gtfs/google_transit_M9.zip
+TFM/
+├─ movilidad-urbana-sim/
+│  ├─ backend/               # API FastAPI (OSRM, OTP, GTFS Toledo)
+│  ├─ frontend/              # Aplicación React + Leaflet
+│  └─ README.md              # Este archivo
+├─ lpmc/
+│  ├─ data/
+│  │  ├─ raw/                # LPMC_dataset.csv original
+│  │  ├─ processed/          # Versión procesada "tipo profesor"
+│  │  └─ preprocessed/       # LPMC_train.csv / LPMC_test.csv generados por mis scripts
+│  ├─ models/                # xgb_lpmc_baseline.joblib, xgb_lpmc_scaler.joblib
+│  ├─ 01_explore.py          # Exploración inicial del dataset
+│  ├─ 02_preprocess.py       # Preprocesado LPMC (replica 0-Process-LPMC.py)
+│  ├─ 03_train_xgb_baseline.py
+│  └─ 04_inspect_and_infer.py
+└─ ...
 ```
 
-(con un nombre similar; se puede ajustar en `gtfs_loader.py` si es necesario).
+Dentro de `movilidad-urbana-sim`:
 
-Se recomienda añadir esta ruta al `.gitignore` para no subir el ZIP al repositorio:
+```text
+backend/
+├─ app/
+│  ├─ api/
+│  │  ├─ routes_osrm.py      # Endpoints de enrutado con OSRM
+│  │  ├─ routes_otp.py       # Endpoints de enrutado con OTP
+│  │  ├─ routes_gtfs.py      # Endpoints de exploración GTFS (paradas, rutas, horarios)
+│  │  └─ ...
+│  ├─ core/
+│  │  └─ config.py           # Configuración básica FastAPI/CORS
+│  └─ main.py                # Punto de entrada FastAPI
+└─ ...
 
-```gitignore
-data/gtfs/*.zip
+frontend/
+├─ src/
+│  ├─ components/
+│  │  └─ MapView.tsx         # Mapa Leaflet + rutas + paradas GTFS
+│  ├─ App.tsx                # UI principal del simulador
+│  └─ ...
+└─ ...
 ```
-
-### 3.2. Lectura de `stops.txt` y endpoint `/api/gtfs/stops`
-
-El servicio `app/services/gtfs_loader.py`:
-
-- abre el ZIP GTFS,
-- localiza el fichero `stops.txt`,
-- y lo parsea con la librería estándar `csv`, extrayendo por cada parada:
-
-  - `stop_id`
-  - `stop_code`
-  - `stop_name`
-  - `stop_desc`
-  - `stop_lat`
-  - `stop_lon`
-
-Los datos se exponen a través del endpoint:
-
-```http
-GET /api/gtfs/stops?limit=500
-```
-
-Parámetros:
-
-- `limit` (opcional, por defecto 500, máximo 5000): número máximo de paradas a devolver.
-
-La respuesta es un JSON con una lista de objetos:
-
-```json
-[
-  {
-    "id": "1234",
-    "code": "09568",
-    "name": "ESTACIÓN-EST.ARANJUEZ",
-    "desc": "Descripción opcional",
-    "lat": 40.03,
-    "lon": -3.61
-  },
-  ...
-]
-```
-
-En el frontend, estos datos se consumen con React Query y se representan como `CircleMarker` de Leaflet sobre el mapa, con un `Tooltip` que muestra el nombre y código de cada parada.
-
-Esta integración demuestra que el sistema es capaz de leer feeds GTFS reales y visualizarlos, preparando el terreno para integraciones posteriores con motores de enrutado de transporte público como OpenTripPlanner.
 
 ---
 
-## 4. Requisitos previos
+## 2. Requisitos previos
 
-### 4.1. Backend
+### 2.1. Software base
 
-- **Python 3.11** (o similar) instalado y accesible en la línea de comandos.
-- **Docker Desktop** para levantar la instancia OSRM local (al menos para el modo coche).
+- Docker / Docker Desktop (para levantar OSRM y OTP).
+- Python 3.11+ (proyecto probado con 3.11/3.12).
+- Node.js 20+ y pnpm o npm (para el frontend).
+- Git (para clonar el repositorio).
 
-### 4.2. Frontend
+### 2.2. Datos externos necesarios
 
-- **Node.js 24.x LTS** (se ha usado la versión 24.11.x).
-- `git` para clonar el repositorio.
+1. **Red viaria**: fichero `.osm.pbf` de Castilla-La Mancha (o el área que se quiera usar). En este TFM se usa:
 
-Opcional pero recomendable:
+   - `clm.osm.pbf` (Castilla-La Mancha), descargado desde Geofabrik.
 
-- Navegadores: **Chrome** o **Firefox** para desarrollo y demo.
-- Evitar extensiones agresivas en el navegador (ver sección de problemas conocidos).
+2. **GTFS urbano de Toledo**: fichero zip con el feed GTFS. En el proyecto se usa:
+
+   - `GTFS_Urbano_Toledo.zip`
+
+3. **Dataset LPMC original** (no se versiona en Git):
+   - `LPMC_dataset.csv` colocado en `lpmc/data/raw/`.
 
 ---
 
-## 5. Clonado del repositorio
+## 3. Puesta en marcha de los servicios de enrutado
+
+### 3.1. OSRM en local (3 perfiles: coche, bici, a pie)
+
+Se utilizan tres contenedores OSRM separados, cada uno con su perfil y un puerto distinto:
+
+- `5000` – Coche (`car`).
+- `5001` – Bicicleta (`bike`).
+- `5002` – A pie (`foot`).
+
+Supongamos que la estructura es:
+
+```text
+TFM/
+└─ osrm/
+   ├─ clm.osm.pbf
+   └─ profiles/
+      ├─ car.lua
+      ├─ bike.lua
+      └─ foot.lua
+```
+
+#### 3.1.1. Preparar los ficheros `.osrm` (una vez)
+
+Desde `TFM/osrm`:
 
 ```bash
-git clone https://github.com/ivanuclm/movilidad-urbana-sim.git
-cd movilidad-urbana-sim
+# Coche
+docker run --rm -t -v "${PWD}:/data" osrm/osrm-backend:v5.27.0 \
+  osrm-extract -p /data/profiles/car.lua /data/clm.osm.pbf
+
+docker run --rm -t -v "${PWD}:/data" osrm/osrm-backend:v5.27.0 \
+  osrm-partition /data/clm.osrm
+
+docker run --rm -t -v "${PWD}:/data" osrm/osrm-backend:v5.27.0 \
+  osrm-customize /data/clm.osrm
 ```
 
----
+Para bici y a pie, si se quiere afinar al máximo se pueden generar `.osrm` separados con otros perfiles. En el PoC actual se utiliza el mismo `.osrm` pero se exponen tres servidores con diferentes perfiles.
 
-## 6. Puesta en marcha del backend (FastAPI)
-
-1. Ir a la carpeta del backend:
-
-   ```bash
-   cd backend
-   ```
-
-2. Crear y activar un entorno virtual (Windows PowerShell):
-
-   ```powershell
-   python -m venv .venv
-   .\.venv\Scripts\Activate.ps1
-   ```
-
-   En Linux/WSL:
-
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate
-   ```
-
-3. Instalar dependencias:
-
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-   (Si no existe el `requirements.txt`, se pueden instalar los paquetes básicos: `fastapi`, `uvicorn[standard]`, `httpx`, `pydantic-settings`, `python-dotenv`, etc.)
-
-4. (**Opcional pero recomendado**) Colocar un feed GTFS en `backend/data/gtfs/` si se desea ver paradas de transporte público en el mapa (consultar sección 3).
-
-5. Ejecutar la API con Uvicorn:
-
-   ```bash
-   uvicorn app.main:app --reload
-   ```
-
-   Por defecto, la API quedará escuchando en:
-
-   - `http://127.0.0.1:8000`
-
-6. Comprobar que la API responde:
-
-   - `http://127.0.0.1:8000/health` → debería devolver `{"status":"ok"}`.
-   - `http://127.0.0.1:8000/docs` → interfaz Swagger/OpenAPI para probar los endpoints `/api/osrm/routes` y `/api/gtfs/stops`.
-
-Ejemplo de cuerpo para probar `/api/osrm/routes` en Swagger:
-
-```json
-{
-  "origin": { "lat": 38.986, "lon": -3.927 },
-  "destination": { "lat": 38.99, "lon": -3.92 },
-  "profiles": ["driving", "cycling", "foot"]
-}
-```
-
----
-
-## 7. Puesta en marcha de OSRM local (perfil coche)
-
-> Si no se desea montar OSRM local todavía, se puede cambiar temporalmente el backend para que `driving` vuelva a apuntar a `https://routing.openstreetmap.de/routed-car`. Sin embargo, la configuración recomendada para el TFM es tener coche en local.
-
-### 7.1. Descarga del extracto OSM
-
-1. Descargar desde Geofabrik un extracto adecuado, por ejemplo **Castilla-La Mancha** desde:
-
-   - https://download.geofabrik.de/europe/spain.html
-
-2. Guardar el fichero `.osm.pbf`, por ejemplo:
-
-   ```text
-   F:\TFM\osrm-clm\castilla-la-mancha-251209.osm.pbf
-   ```
-
-### 7.2. Construcción del dataset OSRM con Docker
-
-Desde la carpeta donde se encuentra el `.osm.pbf`:
+#### 3.1.2. Levantar los servidores OSRM
 
 ```bash
-cd F:\TFM\osrm-clm
+# Coche (perfil car) en 5000
+docker run --rm -t -p 5000:5000 -v "${PWD}:/data" osrm/osrm-backend:v5.27.0 \
+  osrm-routed --algorithm mld /data/clm.osrm
+
+# Bici (perfil bike) en 5001
+docker run --rm -t -p 5001:5000 -v "${PWD}:/data" osrm/osrm-backend:v5.27.0 \
+  osrm-routed --algorithm mld --max-table-size 1000 /data/clm.osrm \
+  --profile /data/profiles/bike.lua
+
+# A pie (perfil foot) en 5002
+docker run --rm -t -p 5002:5000 -v "${PWD}:/data" osrm/osrm-backend:v5.27.0 \
+  osrm-routed --algorithm mld --max-table-size 1000 /data/clm.osrm \
+  --profile /data/profiles/foot.lua
 ```
 
-Ejecutar, uno a uno, los siguientes comandos (ejemplo en PowerShell, adaptables a otras rutas):
+El backend FastAPI asume por defecto estos puertos:
+
+- `http://localhost:5000/route/v1/car/...`
+- `http://localhost:5001/route/v1/bike/...`
+- `http://localhost:5002/route/v1/foot/...`
+
+Si se cambian, hay que actualizar la configuración en `routes_osrm.py` (o en el módulo de configuración).
+
+### 3.2. OpenTripPlanner (OTP) en local
+
+Para OTP se ha seguido la versión **2.5.0** desde la imagen oficial de Docker.
+
+#### 3.2.1. Directorio de trabajo
+
+```text
+TFM/
+└─ otp-toledo/
+   ├─ clm.osm.pbf
+   ├─ GTFS_Urbano_Toledo.zip
+   └─ graph.obj           # se genera en el paso de build
+```
+
+#### 3.2.2. Construir el grafo
+
+Desde `TFM/otp-toledo`:
 
 ```bash
-# 1. Extracción
-docker run --rm -t -v "${PWD}:/data" osrm/osrm-backend   osrm-extract -p /opt/car.lua /data/castilla-la-mancha-251209.osm.pbf
-
-# 2. Particionado
-docker run --rm -t -v "${PWD}:/data" osrm/osrm-backend   osrm-partition /data/castilla-la-mancha-251209.osrm
-
-# 3. Customización
-docker run --rm -t -v "${PWD}:/data" osrm/osrm-backend   osrm-customize /data/castilla-la-mancha-251209.osrm
+docker run --rm \
+  -v "${PWD}:/var/opentripplanner" \
+  opentripplanner/opentripplanner:2.5.0 \
+  --build --save
 ```
 
-### 7.3. Levantar el servidor OSRM
+Esto detecta `clm.osm.pbf` y `GTFS_Urbano_Toledo.zip`, construye el grafo y genera `graph.obj` en el mismo directorio.
 
-Finalmente, arrancar el servidor:
+#### 3.2.3. Servir OTP
 
 ```bash
-docker run -t --name osrm-car-clm -p 5000:5000 -v "${PWD}:/data" osrm/osrm-backend   osrm-routed --algorithm mld /data/castilla-la-mancha-251209.osrm
+docker run --rm \
+  -v "${PWD}:/var/opentripplanner" \
+  -p 8080:8080 \
+  opentripplanner/opentripplanner:2.5.0 \
+  --load --serve
 ```
 
-Con esto, OSRM quedará servido en:
+La interfaz de **Debug UI** estará disponible en:
 
-- `http://127.0.0.1:5000`
+- `http://localhost:8080`
 
-El backend asume por defecto que esta URL está disponible para el perfil `driving`. Si el contenedor no está levantado, las peticiones de coche fallarán, mientras que bici y a pie seguirán funcionando (ya que usan `routing.openstreetmap.de`).
+Y el endpoint de planificación que usa el backend es:
 
----
-
-## 8. Puesta en marcha del frontend (Vite + React)
-
-1. En otra terminal, ir a la carpeta del frontend:
-
-   ```bash
-   cd frontend
-   ```
-
-2. Instalar dependencias de Node:
-
-   ```bash
-   npm install
-   ```
-
-3. Lanzar el servidor de desarrollo de Vite:
-
-   ```bash
-   npm run dev
-   ```
-
-   Vite mostrará algo como:
-
-   ```text
-   VITE v7.x.x  ready in XXX ms
-
-     ➜  Local:   http://localhost:5173/
-   ```
-
-4. Abrir el navegador en:
-
-   - `http://localhost:5173/`
-
-Deberías ver el **Simulador de movilidad urbana (PoC)** con:
-
-- mapa de OpenStreetMap,
-- marcadores de origen (pin verde ▶) y destino (pin rojo ■),
-- botones `Coche`, `Bici`, `A pie`,
-- botón “Calcular rutas OSRM”,
-- tabla con las métricas por modo,
-- y, si el backend GTFS está configurado, paradas de transporte público representadas sobre el mapa.
+- `http://localhost:8080/otp/routers/default/plan`
 
 ---
 
-## 9. Flujo de uso de la demo
+## 4. Backend FastAPI
 
-1. Haz clic en el mapa:
-   - primer clic → mueve el **origen**,
-   - segundo clic → mueve el **destino**,
-   - siguientes clics → alternan origen/destino.
-2. Pulsa **“Calcular rutas OSRM”**:
-   - el frontend llama al backend,
-   - FastAPI consulta:
-     - OSRM local (Castilla-La Mancha) para coche,
-     - `routing.openstreetmap.de` para bici y a pie,
-   - se pinta la ruta de coche por defecto.
-3. Cambia de modo usando los botones:
-   - **Coche**, **Bici**, **A pie**,
-   - el mapa actualiza la polilínea y la tabla resalta la fila del modo escogido.
-4. Activa o desactiva la visualización de paradas GTFS si la interfaz lo permite, para ver la red de transporte público sobre el mapa.
+### 4.1. Instalación de dependencias
+
+Desde `TFM/movilidad-urbana-sim/backend`:
+
+```bash
+python -m venv .venv
+source .venv/Scripts/activate  # Windows PowerShell: .venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+Las dependencias principales incluyen:
+
+- `fastapi`, `uvicorn`
+- `httpx`
+- `pydantic`
+- `polyline`
+- `pandas` (para GTFS y futuros usos)
+- `scikit-learn`, `xgboost`, `joblib` (para el modelo LPMC, en la siguiente fase)
+
+### 4.2. Lanzar el backend
+
+```bash
+uvicorn app.main:app --reload
+```
+
+Por defecto se sirve en:
+
+- `http://127.0.0.1:8000`
+
+Endpoints principales (ejemplos):
+
+- `POST /api/osrm/routes`
+  - Body: `{ "origin": {lat, lon}, "destination": {lat, lon}, "profiles": ["driving","cycling","foot"] }`
+  - Devuelve distancias, duraciones y geometrías por modo (OSRM).
+
+- `POST /api/otp/routes`
+  - Body: `{ "origin": {lat, lon}, "destination": {lat, lon}, "itinerary_index": 0 }`
+  - Llama a OTP, ordena los itinerarios por duración, permite paginar (`itinerary_index`) y devuelve:
+    - Ruta completa concatenada.
+    - Lista de **segmentos** por modo (`segments`), con distinción visual entre tramos a pie y en bus.
+    - Índice y número total de itinerarios (`itinerary_index`, `total_itineraries`).
+
+- `GET /api/gtfs/stops?limit=5000`
+  - Devuelve todas las paradas GTFS, incluyendo referencia a las rutas que pasan por cada una.
+
+- `GET /api/gtfs/routes`
+  - Devuelve la lista de líneas de transporte público.
+
+- `GET /api/gtfs/routes/{route_id}`
+  - Devuelve paradas ordenadas y shape de la línea GTFS seleccionada.
+
+- `GET /api/gtfs/routes/{route_id}/schedule?date=YYYY-MM-DD`
+  - Devuelve horarios agregados por dirección (nº de viajes, primeras/últimas salidas, etc.).
+
+En una fase posterior se añadirá un endpoint de inferencia de elección modal, que llamará al modelo entrenado sobre LPMC.
 
 ---
 
-## 10. Problemas conocidos (navegadores y extensiones)
+## 5. Frontend React + Leaflet
 
-Durante el desarrollo se detectó un problema concreto usando **Microsoft Edge**:
+### 5.1. Instalación y arranque
 
-- En algunas configuraciones, la página aparecía completamente en blanco.
-- En la consola del navegador se veían errores como:
-  - `Failed to load module script: Expected a JavaScript-or-Wasm module script but the server responded with a MIME type of "text/html".`
-  - `Uncaught SyntaxError: Unexpected token '<' (at main.tsx:...)`.
-- Estos errores estaban relacionados con extensiones y componentes de Edge que inyectan scripts (por ejemplo, el sistema de seguimiento de precios, “shopping”, etc.).
+Desde `TFM/movilidad-urbana-sim/frontend`:
 
-En cambio, el mismo proyecto funcionaba sin problemas en **Google Chrome**.
+```bash
+pnpm install   # o npm install
+pnpm dev       # o npm run dev
+```
 
-### Recomendaciones
+La aplicación se servirá por defecto en `http://localhost:5173`.
 
-Si al arrancar el frontend:
+### 5.2. Funcionalidad actual
 
-- la página se muestra en blanco;
-- no aparecen ni el contenido de la plantilla de Vite (logos de Vite/React) ni el mapa;
+- El mapa (Leaflet, `MapView.tsx`) muestra:
+  - Origen y destino (marcadores personalizados).
+  - La ruta seleccionada según el modo (`Coche`, `Bici`, `A pie`, `Transporte público`).
+  - Paradas GTFS de Toledo (puntos azules).
+  - Paradas de la línea GTFS seleccionada (círculos naranjas).
+  - Segmentos OTP:
+    - Tramos a pie como líneas grises discontinuas.
+    - Tramos en bus como líneas naranjas continuas.
 
-entonces:
+- El panel lateral permite:
+  - Activar/desactivar la visualización de paradas GTFS.
+  - Seleccionar una línea concreta desde desplegable o clicando una parada en el mapa.
+  - Calcular rutas OSRM+OTP para el origen/destino actual.
+  - Cambiar de modo (`Coche`, `Bici`, `A pie`, `Transporte público`), resaltando la ruta correspondiente.
+  - Ver una tabla con distancias y duraciones por modo.
+  - Paginador de itinerarios OTP (`Anterior / Siguiente`) ordenados por duración.
 
-1. Prueba a abrir la aplicación en **otro navegador** (Chrome o Firefox).
-2. O abre una ventana en modo **Incógnito / InPrivate**, donde no se cargan las extensiones.
-3. Si usas Edge, desactiva temporalmente extensiones relacionadas con “shopping”, “price tracking” o similares.
-
-Para la defensa del TFM se recomienda utilizar un navegador limpio (sin extensiones que modifiquen páginas) para evitar interferencias en la demo.
+En el bloque de **transporte público (GTFS)** se muestran además:
+- Nombre de la línea seleccionada y número de paradas.
+- Selector de fecha `date` para los horarios.
+- Resumen de horarios por dirección (headsign, nº de viajes, primera y última salida, listado de salidas).
 
 ---
 
-## 11. Próximos pasos
+## 6. Preprocesado y modelo LPMC (carpeta `lpmc/`)
 
-Esta PoC deja preparados:
+Aunque el modelo LPMC aún no está integrado en el backend, ya se ha dejado preparada una pipeline reproducible en `TFM/lpmc`.
 
-- El backend de rutas (OSRM) listo para ser usado como **fuente de variables de trayecto**.
-- El backend de transporte público con capacidad para leer feeds GTFS reales y exponer paradas.
-- El frontend con:
-  - selección interactiva origen–destino,
-  - visualización de rutas por perfil,
-  - incorporación de capas de transporte público,
-  - y un layout tipo panel muy adecuado para añadir el **perfil del viajero** y el **modelo de elección modal**.
+### 6.1. Scripts
 
-Los siguientes desarrollos previstos para el TFM son:
+1. `01_explore.py`
+   - Carga el fichero `data/raw/LPMC_dataset.csv` (original).
+   - Muestra shape, primeras filas, tipos de datos y estadísticas básicas.
 
-1. Integrar el dataset **LPMC (London Passenger Mode Choice)** y los modelos de Machine Learning proporcionados por el director.
-2. Añadir al frontend un formulario de **perfil de viajero** y controles de políticas (coste del coche, tarifas, frecuencia de bus, etc.).
-3. Conectar ambos mundos mediante un nuevo endpoint de predicción, combinando:
-   - variables del usuario,
-   - variables del trayecto derivadas de OSRM,
-   - y parámetros de escenario.
-4. Extender el simulador con métricas agregadas, gráficos y, en su momento, integración con datos GTFS y OTP para rutas de transporte público.
+2. `02_preprocess.py`
+   - Replica la lógica del script del profesor `0-Process-LPMC.py`:
+     - One-hot de `purpose`.
+     - Agrupación y one-hot de `fueltype`.
+     - Mapeo de `travel_mode` a {0: walk, 1: cycle, 2: pt, 3: drive}.
+     - Eliminación de columnas auxiliares: `trip_id`, `person_n`, `trip_n`, fechas desglosadas, campos de coste redundantes, etc.
+     - División en train/test según `survey_year` (años 1–2 train, año 3 test).
+   - Guarda:
+     - `data/preprocessed/LPMC_train.csv`
+     - `data/preprocessed/LPMC_test.csv`
 
-Con estos pasos, la base técnica que proporciona este repositorio se convertirá en el núcleo del simulador de movilidad urbana que se presentará en la defensa del TFM.
+3. `03_train_xgb_baseline.py`
+   - Carga train/test ya preprocesados.
+   - Separa `X` e `y` (variable objetivo = `travel_mode`).
+   - Aplica un `StandardScaler` a un subconjunto de variables numéricas relevantes
+     (`day_of_week`, `start_time_linear`, `age`, `car_ownership`, `distance`, etc.).
+   - Entrena un XGBoost multicategoría con hiperparámetros de referencia.
+   - Evalúa accuracy en train y test (≈ 0.83 / 0.73) y guarda:
+     - `models/xgb_lpmc_baseline.joblib`
+     - `models/xgb_lpmc_scaler.joblib`
+
+4. `04_inspect_and_infer.py`
+   - Carga el modelo y el scaler.
+   - Reaplica el mismo escalado sobre el test.
+   - Realiza predicciones y muestra:
+     - Ejemplos individuales con probabilidades por clase.
+     - Matriz de confusión (en consola y con `ConfusionMatrixDisplay`).
+
+Estas rutas y ficheros están pensados para que, en una fase posterior, el backend pueda cargar `joblib` y exponer un endpoint `/api/lpmc/predict` que, dado el escenario de Toledo (duraciones y costes por modo, día de la semana, hora, etc.), devuelva la probabilidad de elección modal para ese caso.
+
+---
+
+## 7. Flujo de trabajo típico para el simulador
+
+1. **Arrancar servicios externos**:
+   - OSRM (tres contenedores para coche/bici/a pie).
+   - OTP con grafo de Toledo.
+
+2. **Levantar backend FastAPI** (`uvicorn app.main:app --reload`).
+
+3. **Levantar frontend React** (`pnpm dev`).
+
+4. **Interactuar con la aplicación**:
+   - Fijar origen y destino haciendo clic alterno en el mapa.
+   - Pulsar en `Calcular rutas` para obtener tiempos y distancias OSRM/OTP.
+   - Alternar modos, navegar entre itinerarios de transporte público y examinar horarios GTFS.
+
+5. **(Opcional, para experimentos de elección modal)**:
+   - Ejecutar scripts de `lpmc/` para recrear el experimento con LPMC.
+   - Usar `04_inspect_and_infer.py` para probar el modelo sobre el test de Londres.
+
+---
+
+## 8. Trabajo futuro e integración con el modelo LPMC
+
+El siguiente paso natural del TFM es:
+
+1. Definir un esquema de **traslado de variables LPMC → Toledo**:
+   - Qué atributos están disponibles en el simulador (distancias/tiempos por modo, costes aproximados, día/hora, características sociodemográficas supuestas del usuario, etc.).
+   - Cómo mapearlos a las columnas que espera el modelo XGBoost.
+
+2. Implementar un endpoint en el backend (`/api/lpmc/predict`) que:
+   - Tome un escenario de Toledo (origen/destino + contexto).
+   - Llame a OSRM/OTP para obtener los tiempos y costes por modo.
+   - Construya el vector de entrada compatible con `xgb_lpmc_baseline`.
+   - Devuelva las probabilidades de elegir walk / cycle / pt / drive.
+
+3. Incorporar las probabilidades al frontend:
+   - Visualizar, por ejemplo, un gráfico de barras con la probabilidad de elección modal para el escenario actual.
+   - Permitir comparar escenarios (cambios en frecuencias de bus, carriles bici, etc.) viendo cómo varía la elección modal prevista.
+
+Con esto, el simulador pasará de ser una herramienta descriptiva (rutas y tiempos) a una herramienta **predictiva**, basada en preferencias aprendidas a partir del LPMC.
+
+---
+
+## 9. Licencias y agradecimientos
+
+- El dataset **LPMC** pertenece a sus autores y se utiliza únicamente con fines académicos.
+- Se usa **OSRM** (Open Source Routing Machine) bajo licencia BSD.
+- Se usa **OpenTripPlanner (OTP)** bajo licencia LGPL.
+- El código del profesor José Ángel Martín-Baos y coautores ha servido como base para el tratamiento del LPMC y la inspiración del modelo de elección modal.
+
+Este README pretende servir como guía de instalación y como resumen técnico del estado actual del TFM, listo para ser ejecutado y extendido por cualquier persona que quiera reproducir los experimentos o continuar el desarrollo.

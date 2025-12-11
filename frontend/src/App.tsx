@@ -22,6 +22,15 @@ type TransitSegment = {
   distance_m: number;
   duration_s: number;
   geometry: Point[];
+
+  route_id?: string | null;
+  route_short_name?: string | null;
+  route_long_name?: string | null;
+  agency_name?: string | null;
+  from_stop_name?: string | null;
+  to_stop_name?: string | null;
+  departure?: string | null;
+  arrival?: string | null;
 };
 
 type TransitResult = {
@@ -211,6 +220,15 @@ function App() {
 
   const transitResult = transitMutation.data ?? null;
   const totalItineraries = transitResult?.total_itineraries ?? 0;
+  const mainTransitSegment = transitResult?.segments.find(
+    (s) => s.mode !== "WALK"
+  );
+
+  const transitLineLabel = mainTransitSegment
+    ? mainTransitSegment.route_short_name ||
+      mainTransitSegment.route_long_name ||
+      mainTransitSegment.route_id
+    : null;
 
 
   const displayedGeometry: Point[] =
@@ -451,7 +469,22 @@ function App() {
                   <tr
                     className={selectedMode === "transit" ? "row-active" : undefined}
                   >
-                    <td>Transporte público</td>
+                    <td>
+                      Transporte público
+                      {transitLineLabel && (
+                        <div style={{ fontSize: "0.75rem", color: "#4b5563" }}>
+                          Línea {transitLineLabel}
+                          {mainTransitSegment?.from_stop_name &&
+                            mainTransitSegment?.to_stop_name && (
+                              <>
+                                {" · "}
+                                {mainTransitSegment.from_stop_name} →{" "}
+                                {mainTransitSegment.to_stop_name}
+                              </>
+                            )}
+                        </div>
+                      )}
+                    </td>
                     <td>{(transitMutation.data.distance_m / 1000).toFixed(2)}</td>
                     <td>{(transitMutation.data.duration_s / 60).toFixed(1)}</td>
                   </tr>
@@ -505,6 +538,67 @@ function App() {
                 </button>
               </div>
             )}
+
+            {selectedMode === "transit" && transitResult && (
+            <div
+              style={{
+                marginTop: "0.75rem",
+                paddingTop: "0.5rem",
+                borderTop: "1px solid #e5e7eb",
+                fontSize: "0.85rem",
+              }}
+            >
+              <h3 style={{ marginBottom: "0.25rem", fontSize: "0.9rem" }}>
+                Detalle del itinerario en transporte público
+              </h3>
+              <ol style={{ paddingLeft: "1.25rem" }}>
+                {transitResult.segments.map((seg, idx) => {
+                  const distKm = seg.distance_m / 1000;
+                  const durMin = seg.duration_s / 60;
+                  const isWalk = seg.mode === "WALK";
+
+                  if (isWalk) {
+                    return (
+                      <li key={idx} style={{ marginBottom: "0.25rem" }}>
+                        Caminar {distKm.toFixed(2)} km ({durMin.toFixed(1)} min)
+                        {seg.to_stop_name && (
+                          <>
+                            {" "}
+                            hasta <strong>{seg.to_stop_name}</strong>
+                          </>
+                        )}
+                      </li>
+                    );
+                  }
+
+                  const label =
+                    seg.route_short_name ||
+                    seg.route_long_name ||
+                    seg.route_id ||
+                    seg.mode;
+
+                  return (
+                    <li key={idx} style={{ marginBottom: "0.25rem" }}>
+                      {seg.departure && <span>{seg.departure} · </span>}
+                      <strong>Línea {label}</strong>
+                      {seg.agency_name && <> ({seg.agency_name})</>}
+                      {seg.from_stop_name && seg.to_stop_name && (
+                        <>
+                          {" "}
+                          de <strong>{seg.from_stop_name}</strong> a{" "}
+                          <strong>{seg.to_stop_name}</strong>
+                        </>
+                      )}
+                      {" · "}
+                      {distKm.toFixed(2)} km ({durMin.toFixed(1)} min)
+                      {seg.arrival && <> · llegada {seg.arrival}</>}
+                    </li>
+                  );
+                })}
+              </ol>
+            </div>
+          )}
+
 
 
           {/* Bloque de transporte público GTFS */}
