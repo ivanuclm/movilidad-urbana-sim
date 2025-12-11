@@ -135,6 +135,12 @@ async def get_otp_route(req: OtpRouteRequest) -> TransitRouteResponse:
     if not itineraries:
         raise HTTPException(status_code=404, detail="OTP no ha encontrado rutas")
 
+    # --- ordenar por duración (segundos) de menor a mayor ---
+    itineraries = sorted(
+        itineraries,
+        key=lambda it: float(it.get("duration") or 1e20)
+    )
+
     # Elegimos índice de itinerario
     if req.itinerary_index is not None and 0 <= req.itinerary_index < len(itineraries):
         idx = req.itinerary_index
