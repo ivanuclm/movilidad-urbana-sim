@@ -4,18 +4,9 @@ import { MapView } from "./components/MapView";
 import "./App.css";
 
 type Profile = "driving" | "cycling" | "foot";
-
 type UiMode = Profile | "transit";
 
-
 type Point = { lat: number; lon: number };
-
-type TransitLegSegment = {
-  mode: string;         // "WALK" | "BUS" | ...
-  distance_m: number;
-  duration_s: number;
-  geometry: Point[];
-};
 
 type TransitSegment = {
   mode: string;
@@ -36,7 +27,7 @@ type TransitSegment = {
 type TransitResult = {
   distance_m: number;
   duration_s: number;
-  geometry: Point[];         // ruta completa
+  geometry: Point[]; // ruta completa
   segments: TransitSegment[];
   itinerary_index: number;
   total_itineraries: number;
@@ -88,7 +79,6 @@ type TransitRouteDetails = {
     color?: string | null;
     text_color?: string | null;
   };
-  // aquí los stops vienen SIN info de rutas, pero nos vale
   stops: (GtfsStop & { sequence: number })[];
   shape?: Point[];
 };
@@ -163,12 +153,40 @@ async function fetchTransitRoute(
   return data.result;
 }
 
-
 const PROFILE_LABELS: Record<Profile, string> = {
   driving: "Coche",
   cycling: "Bici",
   foot: "A pie",
 };
+
+// Colores coherentes entre botones y líneas
+const MODE_COLORS: Record<UiMode, string> = {
+  driving: "#2563eb", // azul
+  cycling: "#16a34a", // verde
+  foot: "#4b5563",    // gris
+  transit: "#f97316", // naranja
+};
+
+// Paleta para rutas GTFS (colores "aleatorios" pero deterministas por route_id)
+const ROUTE_COLOR_PALETTE = [
+  "#f97316", // naranja
+  "#0ea5e9", // azul claro
+  "#a855f7", // violeta
+  "#22c55e", // verde
+  "#e11d48", // rosa fuerte
+  "#14b8a6", // teal
+  "#facc15", // amarillo
+];
+
+function colorForRouteId(routeId: string | null): string {
+  if (!routeId) return "#f97316";
+  let hash = 0;
+  for (let i = 0; i < routeId.length; i++) {
+    hash = (hash * 31 + routeId.charCodeAt(i)) | 0;
+  }
+  const idx = Math.abs(hash) % ROUTE_COLOR_PALETTE.length;
+  return ROUTE_COLOR_PALETTE[idx];
+}
 
 function App() {
   const [origin, setOrigin] = useState<Point>({ lat: 39.87029, lon: -4.03434 });
@@ -176,7 +194,7 @@ function App() {
     lat: 39.85968,
     lon: -4.00525,
   });
-  // const [selectedProfile, setSelectedProfile] = useState<Profile>("driving");
+
   const [selectedMode, setSelectedMode] = useState<UiMode>("driving");
   const [transitItineraryIndex, setTransitItineraryIndex] = useState(0);
 
@@ -191,32 +209,23 @@ function App() {
 
   // ---------------- OSRM ----------------
 
-  // const { mutate, data, isPending, error } = useMutation<RouteResponse, Error>({
-  //   mutationFn: () => fetchRoutes(origin, destination),
-  // });
-
   const osrmMutation = useMutation<RouteResponse, Error>({
     mutationFn: () => fetchRoutes(origin, destination),
   });
 
   const transitMutation = useMutation<TransitResult, Error, number | null>({
-    mutationFn: (idxOverride) => fetchTransitRoute(origin, destination, idxOverride ?? transitItineraryIndex),
+    mutationFn: (idxOverride) =>
+      fetchTransitRoute(origin, destination, idxOverride ?? transitItineraryIndex),
   });
 
-  const isCalculating =
-    osrmMutation.isPending || transitMutation.isPending;
-  // const selectedRoute =
-  //   data?.results.find((r) => r.profile === selectedProfile) ?? null;
-
-  // const selectedRoute =
-  // osrmMutation.data?.results.find((r) => r.profile === selectedProfile) ?? null;
+  const isCalculating = osrmMutation.isPending || transitMutation.isPending;
 
   const selectedRoute =
-  selectedMode !== "transit"
-    ? osrmMutation.data?.results.find(
-        (r) => r.profile === selectedMode
-      ) ?? null
-    : null;
+    selectedMode !== "transit"
+      ? osrmMutation.data?.results.find(
+          (r) => r.profile === selectedMode
+        ) ?? null
+      : null;
 
   const transitResult = transitMutation.data ?? null;
   const totalItineraries = transitResult?.total_itineraries ?? 0;
@@ -230,12 +239,12 @@ function App() {
       mainTransitSegment.route_id
     : null;
 
-
   const displayedGeometry: Point[] =
-  selectedMode === "transit"
-    ? transitMutation.data?.geometry ?? []
-    : selectedRoute?.geometry ?? [];
+    selectedMode === "transit"
+      ? transitMutation.data?.geometry ?? []
+      : selectedRoute?.geometry ?? [];
 
+  const transitRouteColor = colorForRouteId(selectedTransitRouteId ?? null);
 
   // ------------- GTFS: paradas -------------
 
@@ -318,17 +327,21 @@ function App() {
             destination={destination}
             setOrigin={setOrigin}
             setDestination={setDestination}
-            // routeGeometry={selectedRoute?.geometry ?? []}
             routeGeometry={displayedGeometry}
+            mode={selectedMode}
             gtfsStops={
               showGtfsStops && gtfsStopsQuery.data ? gtfsStopsQuery.data : []
             }
             transitShape={transitShape}
             transitRouteStops={transitRouteStops}
+            transitRouteColor={transitRouteColor}
             onSelectTransitRoute={(routeId) => {
               setSelectedTransitRouteId(routeId);
             }}
-            transitSegments={transitResult?.segments ?? []}
+            // solo mostramos segmentos OTP cuando el modo es "transit"
+            transitSegments={
+              selectedMode === "transit" ? transitResult?.segments ?? [] : []
+            }
           />
         </section>
 
@@ -395,9 +408,15 @@ function App() {
               <button
                 key={p}
                 type="button"
-                className={
-                  "mode-button" +
-                  (selectedMode === p ? " mode-button--active" : "")
+                className="mode-button"
+                style={
+                  selectedMode === p
+                    ? {
+                        background: MODE_COLORS[p],
+                        borderColor: MODE_COLORS[p],
+                        color: "#ffffff",
+                      }
+                    : undefined
                 }
                 onClick={() => setSelectedMode(p)}
                 disabled={isCalculating}
@@ -408,9 +427,15 @@ function App() {
 
             <button
               type="button"
-              className={
-                "mode-button" +
-                (selectedMode === "transit" ? " mode-button--active" : "")
+              className="mode-button"
+              style={
+                selectedMode === "transit"
+                  ? {
+                      background: MODE_COLORS.transit,
+                      borderColor: MODE_COLORS.transit,
+                      color: "#ffffff",
+                    }
+                  : undefined
               }
               onClick={() => setSelectedMode("transit")}
               disabled={isCalculating || !transitMutation.data}
@@ -419,11 +444,9 @@ function App() {
             </button>
           </div>
 
-
           <button
             onClick={() => {
               osrmMutation.mutate();
-              // transitMutation.mutate();
               setTransitItineraryIndex(0);
               transitMutation.mutate(0);
             }}
@@ -433,113 +456,127 @@ function App() {
             {isCalculating ? "Calculando..." : "Calcular rutas"}
           </button>
 
-
           {osrmMutation.error && (
             <p className="error-text">
-              Error OSRM rutas coche/bici/a pie: {(osrmMutation.error as Error).message}
+              Error OSRM rutas coche/bici/a pie:{" "}
+              {(osrmMutation.error as Error).message}
             </p>
           )}
           {transitMutation.error && (
             <p className="error-text">
-              Error OTP transporte público: {(transitMutation.error as Error).message}
+              Error OTP transporte público:{" "}
+              {(transitMutation.error as Error).message}
             </p>
           )}
 
-            <table className="routes-table">
-              <thead>
-                <tr>
-                  <th>Modo</th>
-                  <th>Distancia (km)</th>
-                  <th>Duración (min)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {osrmMutation.data?.results.map((r) => (
-                  <tr
-                    key={r.profile}
-                    className={selectedMode === r.profile ? "row-active" : undefined}
-                  >
-                    <td>{PROFILE_LABELS[r.profile]}</td>
-                    <td>{(r.distance_m / 1000).toFixed(2)}</td>
-                    <td>{(r.duration_s / 60).toFixed(1)}</td>
-                  </tr>
-                ))}
-
-                {transitMutation.data && (
-                  <tr
-                    className={selectedMode === "transit" ? "row-active" : undefined}
-                  >
-                    <td>
-                      Transporte público
-                      {transitLineLabel && (
-                        <div style={{ fontSize: "0.75rem", color: "#4b5563" }}>
-                          Línea {transitLineLabel}
-                          {mainTransitSegment?.from_stop_name &&
-                            mainTransitSegment?.to_stop_name && (
-                              <>
-                                {" · "}
-                                {mainTransitSegment.from_stop_name} →{" "}
-                                {mainTransitSegment.to_stop_name}
-                              </>
-                            )}
-                        </div>
-                      )}
-                    </td>
-                    <td>{(transitMutation.data.distance_m / 1000).toFixed(2)}</td>
-                    <td>{(transitMutation.data.duration_s / 60).toFixed(1)}</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-
-            {transitResult && (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "0.5rem",
-                  marginTop: "0.5rem",
-                  fontSize: "0.85rem",
-                }}
-              >
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (transitItineraryIndex <= 0) return;
-                    const next = transitItineraryIndex - 1;
-                    setTransitItineraryIndex(next);
-                    transitMutation.mutate(next);
-                  }}
-                  disabled={transitItineraryIndex <= 0 || transitMutation.isPending}
-                >
-                  ◀ Anterior
-                </button>
-
-                <span>
-                  Itinerario {transitItineraryIndex + 1} de {totalItineraries || "?"}
-                </span>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!totalItineraries) return;
-                    if (transitItineraryIndex >= totalItineraries - 1) return;
-                    const next = transitItineraryIndex + 1;
-                    setTransitItineraryIndex(next);
-                    transitMutation.mutate(next);
-                  }}
-                  disabled={
-                    !totalItineraries ||
-                    transitItineraryIndex >= totalItineraries - 1 ||
-                    transitMutation.isPending
+          <table className="routes-table">
+            <thead>
+              <tr>
+                <th>Modo</th>
+                <th>Distancia (km)</th>
+                <th>Duración (min)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {osrmMutation.data?.results.map((r) => (
+                <tr
+                  key={r.profile}
+                  className={
+                    selectedMode === r.profile ? "row-active" : undefined
                   }
                 >
-                  Siguiente ▶
-                </button>
-              </div>
-            )}
+                  <td>{PROFILE_LABELS[r.profile]}</td>
+                  <td>{(r.distance_m / 1000).toFixed(2)}</td>
+                  <td>{(r.duration_s / 60).toFixed(1)}</td>
+                </tr>
+              ))}
 
-            {selectedMode === "transit" && transitResult && (
+              {transitMutation.data && (
+                <tr
+                  className={
+                    selectedMode === "transit" ? "row-active" : undefined
+                  }
+                >
+                  <td>
+                    Transporte público
+                    {transitLineLabel && (
+                      <div
+                        style={{ fontSize: "0.75rem", color: "#4b5563" }}
+                      >
+                        Línea {transitLineLabel}
+                        {mainTransitSegment?.from_stop_name &&
+                          mainTransitSegment?.to_stop_name && (
+                            <>
+                              {" · "}
+                              {mainTransitSegment.from_stop_name} →{" "}
+                              {mainTransitSegment.to_stop_name}
+                            </>
+                          )}
+                      </div>
+                    )}
+                  </td>
+                  <td>
+                    {(transitMutation.data.distance_m / 1000).toFixed(2)}
+                  </td>
+                  <td>
+                    {(transitMutation.data.duration_s / 60).toFixed(1)}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+
+          {transitResult && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "0.5rem",
+                marginTop: "0.5rem",
+                fontSize: "0.85rem",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  if (transitItineraryIndex <= 0) return;
+                  const next = transitItineraryIndex - 1;
+                  setTransitItineraryIndex(next);
+                  transitMutation.mutate(next);
+                }}
+                disabled={
+                  transitItineraryIndex <= 0 || transitMutation.isPending
+                }
+              >
+                ◀ Anterior
+              </button>
+
+              <span>
+                Itinerario {transitItineraryIndex + 1} de{" "}
+                {totalItineraries || "?"}
+              </span>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (!totalItineraries) return;
+                  if (transitItineraryIndex >= totalItineraries - 1) return;
+                  const next = transitItineraryIndex + 1;
+                  setTransitItineraryIndex(next);
+                  transitMutation.mutate(next);
+                }}
+                disabled={
+                  !totalItineraries ||
+                  transitItineraryIndex >= totalItineraries - 1 ||
+                  transitMutation.isPending
+                }
+              >
+                Siguiente ▶
+              </button>
+            </div>
+          )}
+
+          {selectedMode === "transit" && transitResult && (
             <div
               style={{
                 marginTop: "0.75rem",
@@ -560,7 +597,8 @@ function App() {
                   if (isWalk) {
                     return (
                       <li key={idx} style={{ marginBottom: "0.25rem" }}>
-                        Caminar {distKm.toFixed(2)} km ({durMin.toFixed(1)} min)
+                        Caminar {distKm.toFixed(2)} km (
+                        {durMin.toFixed(1)} min)
                         {seg.to_stop_name && (
                           <>
                             {" "}
@@ -598,8 +636,6 @@ function App() {
               </ol>
             </div>
           )}
-
-
 
           {/* Bloque de transporte público GTFS */}
           {selectedTransitRouteId && (

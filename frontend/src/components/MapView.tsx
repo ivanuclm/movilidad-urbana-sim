@@ -58,6 +58,8 @@ const destinationIcon = L.divIcon({
   iconAnchor: [18.75, 40],
 });
 
+type UiMode = "driving" | "cycling" | "foot" | "transit";
+
 type Point = { lat: number; lon: number };
 
 type TransitRouteRef = {
@@ -76,13 +78,6 @@ type GtfsStop = {
   routes?: TransitRouteRef[];
 };
 
-type TransitLegSegment = {
-  mode: string;
-  distance_m: number;
-  duration_s: number;
-  geometry: Point[];
-};
-
 type TransitSegment = {
   mode: string;
   distance_m: number;
@@ -96,13 +91,14 @@ interface MapViewProps {
   setOrigin: (p: Point) => void;
   setDestination: (p: Point) => void;
   routeGeometry: Point[];
+  mode: UiMode;
   gtfsStops?: GtfsStop[];
   transitShape?: Point[];
   transitRouteStops?: GtfsStop[];
+  transitRouteColor?: string;
   onSelectTransitRoute?: (routeId: string) => void;
   transitSegments?: TransitSegment[];
 }
-
 
 function ClickHandler({
   setOrigin,
@@ -134,13 +130,14 @@ export function MapView({
   setOrigin,
   setDestination,
   routeGeometry,
+  mode,
   gtfsStops,
   transitShape,
   transitRouteStops,
+  transitRouteColor,
   onSelectTransitRoute,
   transitSegments,
 }: MapViewProps) {
-
   const osrmPolylinePositions = routeGeometry.map(
     (p) => [p.lat, p.lon] as [number, number]
   );
@@ -150,12 +147,55 @@ export function MapView({
   );
 
   const otpTransitPolylines =
-    transitSegments?.map((seg) => ({
-      mode: seg.mode,
-      positions: seg.geometry.map(
-        (p) => [p.lat, p.lon] as [number, number]
-      ),
-    })) ?? [];
+    mode === "transit" && transitSegments
+      ? transitSegments.map((seg) => ({
+          mode: seg.mode,
+          positions: seg.geometry.map(
+            (p) => [p.lat, p.lon] as [number, number]
+          ),
+        }))
+      : [];
+
+  // Estilos para la línea principal según modo
+  // let mainRoutePathOptions:
+  //   | L.PathOptions
+  //   | undefined = undefined;
+
+  // if (mode === "driving") {
+  //   mainRoutePathOptions = { color: "#2563eb", weight: 5 };
+  // } else if (mode === "cycling") {
+  //   mainRoutePathOptions = { color: "#16a34a", weight: 4 };
+  // } else if (mode === "foot") {
+  //   mainRoutePathOptions = {
+  //     color: "#4b5563",
+  //     weight: 3,
+  //     dashArray: "6 6",
+  //   };
+  // }
+
+    let mainRoutePathOptions: L.PathOptions | undefined = undefined;
+
+    if (mode === "driving") {
+      mainRoutePathOptions = {
+        color: "#2563eb",
+        weight: 5,
+        // importante: resetear dashArray para que no herede el de "A pie"
+        dashArray: "",
+      };
+    } else if (mode === "cycling") {
+      mainRoutePathOptions = {
+        color: "#16a34a",
+        weight: 4,
+        dashArray: "",
+      };
+    } else if (mode === "foot") {
+      mainRoutePathOptions = {
+        color: "#4b5563",
+        weight: 3,
+        dashArray: "6 6",
+      };
+    }
+
 
   return (
     <MapContainer center={defaultCenter} zoom={13} className="map-container">
@@ -168,21 +208,38 @@ export function MapView({
 
       {/* Origen / destino */}
       <Marker position={[origin.lat, origin.lon]} icon={originIcon} />
-      <Marker position={[destination.lat, destination.lon]} icon={destinationIcon} />
+      <Marker
+        position={[destination.lat, destination.lon]}
+        icon={destinationIcon}
+      />
 
-      {/* Ruta OSRM */}
-      {osrmPolylinePositions.length > 0 && (
-        <Polyline positions={osrmPolylinePositions} />
-      )}
+      {/* Ruta principal:
+          - Para coche/bici/a pie: línea coloreada según modo
+          - Para tránsito: la dibujamos solo con los segmentos OTP,
+            así que NO pintamos la general aquí */}
+      {osrmPolylinePositions.length > 0 &&
+        mode !== "transit" &&
+        mainRoutePathOptions && (
+          <Polyline
+            positions={osrmPolylinePositions}
+            pathOptions={mainRoutePathOptions}
+          />
+        )}
 
-      {/* Ruta GTFS seleccionada */}
+      {/* Ruta GTFS seleccionada (desde routes.txt) */}
       {transitPolylinePositions.length > 0 && (
         <Polyline
           positions={transitPolylinePositions}
-          pathOptions={{ color: "#f97316", weight: 4 }}
+          pathOptions={{
+            color: transitRouteColor || "#f97316",
+            weight: 4,
+          }}
         />
       )}
 
+      {/* Segmentos de OTP (solo en modo transit):
+          - WALK: gris discontinua
+          - resto (bus, etc): naranja más gruesa */}
       {otpTransitPolylines.map((seg, idx) => {
         const isWalk = seg.mode === "WALK";
         return (
@@ -194,11 +251,11 @@ export function MapView({
                 ? {
                     color: "#4b5563",
                     weight: 4,
-                    dashArray: "6 6", // línea discontinua para caminar
+                    dashArray: "6 6",
                   }
                 : {
                     color: "#f97316",
-                    weight: 5, // más gordita para el bus
+                    weight: 5,
                   }
             }
           />
@@ -266,7 +323,7 @@ export function MapView({
             key={`route-${s.id}`}
             center={[s.lat, s.lon]}
             radius={5}
-            pathOptions={{ color: "#f97316", weight: 2 }}
+            pathOptions={{ color: transitRouteColor || "#f97316", weight: 2 }}
           />
         ))}
     </MapContainer>
