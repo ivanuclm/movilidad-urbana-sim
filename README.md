@@ -5,7 +5,7 @@ Este repositorio contiene el código del Trabajo Fin de Máster orientado al **a
 - Un **frontend React + Vite** con mapa interactivo (Leaflet) para fijar origen/destino y explorar rutas.
 - Un **backend FastAPI** que actúa como capa de orquestación sobre:
   - Tres instancias de **OSRM** en local (coche, bici y a pie).
-  - Una instancia de **OpenTripPlanner (OTP)** en local con la red viaria y el GTFS urbano de Toledo.
+  - Una instancia de **OpenTripPlanner (OTP)** en local con la red viaria de Castilla-La Mancha y el GTFS urbano de Toledo.
   - Scripts de preprocesado y modelos de **elección modal** entrenados sobre el dataset **LPMC (London Passenger Mode Choice)**.
 
 El objetivo final es disponer de un simulador capaz de combinar tiempos y distancias reales de red (OSRM/OTP) con preferencias aprendidas a partir del LPMC para estimar qué modo de transporte escogería un usuario en Toledo (walk, cycle, pt, drive).
