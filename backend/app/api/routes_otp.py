@@ -70,8 +70,10 @@ def _build_otp_params(req: OtpRouteRequest) -> dict:
         "fromPlace": f"{req.origin.lat},{req.origin.lon}",
         "toPlace": f"{req.destination.lat},{req.destination.lon}",
         "mode": "TRANSIT,WALK",
-        "date": now.strftime("%Y-%m-%d"),
-        "time": now.strftime("%H:%M"),
+        # "date": now.strftime("%Y-%m-%d"),
+        # "time": now.strftime("%H:%M"),
+        "date": "2025-12-01",  # fecha fija para evitar rutas no disponibles en días festivos o fines de semana
+        "time": "12:00",  # hora fija para evitar rutas nocturnas sin transporte público
         "numItineraries": 5,
         # intentamos favorecer el bus frente a ir completamente a pie
         "maxWalkDistance": 2000,      # en metros

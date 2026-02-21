@@ -1,4 +1,4 @@
-# Simulador web de movilidad urbana – TFM
+﻿# Simulador web de movilidad urbana – TFM
 
 Este repositorio contiene el código del Trabajo Fin de Máster orientado al **análisis y simulación de escenarios de movilidad urbana** en la ciudad de Toledo. El sistema integra:
 
@@ -113,14 +113,11 @@ Desde `TFM/osrm`:
 
 ```bash
 # Coche
-docker run --rm -t -v "${PWD}:/data" osrm/osrm-backend:v5.27.0 \
-  osrm-extract -p /data/profiles/car.lua /data/clm.osm.pbf
+docker run --rm -t -v "${PWD}:/data" osrm/osrm-backend:latest osrm-extract -p /data/profiles/car.lua /data/clm.osm.pbf
 
-docker run --rm -t -v "${PWD}:/data" osrm/osrm-backend:v5.27.0 \
-  osrm-partition /data/clm.osrm
+docker run --rm -t -v "${PWD}:/data" osrm/osrm-backend:latest osrm-partition /data/clm.osrm
 
-docker run --rm -t -v "${PWD}:/data" osrm/osrm-backend:v5.27.0 \
-  osrm-customize /data/clm.osrm
+docker run --rm -t -v "${PWD}:/data" osrm/osrm-backend:latest osrm-customize /data/clm.osrm
 ```
 
 Para bici y a pie, si se quiere afinar al máximo se pueden generar `.osrm` separados con otros perfiles. En el PoC actual se utiliza el mismo `.osrm` pero se exponen tres servidores con diferentes perfiles.
@@ -129,16 +126,16 @@ Para bici y a pie, si se quiere afinar al máximo se pueden generar `.osrm` sepa
 
 ```bash
 # Coche (perfil car) en 5000
-docker run --rm -t -p 5000:5000 -v "${PWD}:/data" osrm/osrm-backend:v5.27.0 \
+docker run --rm -t -p 5000:5000 -v "${PWD}:/data" osrm/osrm-backend:latest \
   osrm-routed --algorithm mld /data/clm.osrm
 
 # Bici (perfil bike) en 5001
-docker run --rm -t -p 5001:5000 -v "${PWD}:/data" osrm/osrm-backend:v5.27.0 \
+docker run --rm -t -p 5001:5000 -v "${PWD}:/data" osrm/osrm-backend:latest \
   osrm-routed --algorithm mld --max-table-size 1000 /data/clm.osrm \
   --profile /data/profiles/bike.lua
 
 # A pie (perfil foot) en 5002
-docker run --rm -t -p 5002:5000 -v "${PWD}:/data" osrm/osrm-backend:v5.27.0 \
+docker run --rm -t -p 5002:5000 -v "${PWD}:/data" osrm/osrm-backend:latest \
   osrm-routed --algorithm mld --max-table-size 1000 /data/clm.osrm \
   --profile /data/profiles/foot.lua
 ```
@@ -170,10 +167,7 @@ TFM/
 Desde `TFM/otp-toledo`:
 
 ```bash
-docker run --rm \
-  -v "${PWD}:/var/opentripplanner" \
-  opentripplanner/opentripplanner:2.5.0 \
-  --build --save
+docker run --rm -v "${PWD}:/var/opentripplanner" opentripplanner/opentripplanner:2.5.0 --build --save
 ```
 
 Esto detecta `clm.osm.pbf` y `GTFS_Urbano_Toledo.zip`, construye el grafo y genera `graph.obj` en el mismo directorio.
@@ -181,11 +175,7 @@ Esto detecta `clm.osm.pbf` y `GTFS_Urbano_Toledo.zip`, construye el grafo y gene
 #### 3.2.3. Servir OTP
 
 ```bash
-docker run --rm \
-  -v "${PWD}:/var/opentripplanner" \
-  -p 8080:8080 \
-  opentripplanner/opentripplanner:2.5.0 \
-  --load --serve
+docker run --rm -v "${PWD}:/var/opentripplanner" -p 8080:8080 opentripplanner/opentripplanner:2.5.0 --load --serve
 ```
 
 La interfaz de **Debug UI** estará disponible en:
