@@ -1,4 +1,4 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { MapView } from "./components/MapView";
 import "./App.css";
@@ -109,6 +109,45 @@ type TransitRouteSchedule = {
   directions: TransitDirectionSchedule[];
 };
 
+type LpmcPurpose = "B" | "HBE" | "HBO" | "HBW" | "NHBO";
+type LpmcFuel = "Average" | "Diesel" | "Hybrid" | "Petrol";
+
+type LpmcUserProfile = {
+  purpose: LpmcPurpose;
+  fueltype: LpmcFuel;
+  day_of_week: number;
+  start_time_linear: number;
+  age: number;
+  female: number;
+  driving_license: number;
+  car_ownership: number;
+  cost_transit: number;
+  cost_driving_total: number;
+};
+
+type LpmcPredictResponse = {
+  predicted_mode: "walk" | "cycle" | "pt" | "drive";
+  confidence: number;
+  probabilities: Record<"walk" | "cycle" | "pt" | "drive", number>;
+  route_features: Record<string, number>;
+  model_info: {
+    model_path: string;
+    scaler_path: string;
+    household_id_strategy: string;
+    itinerary_index: number;
+    total_itineraries: number;
+  };
+};
+
+type LpmcDebugResponse = {
+  feature_names: string[];
+  raw_features: Record<string, number>;
+  scaled_features: Record<string, number>;
+  scaled_columns: string[];
+  route_features: Record<string, number>;
+  model_info: Record<string, string | number>;
+};
+
 async function fetchRoutes(
   origin: Point,
   destination: Point
@@ -153,10 +192,72 @@ async function fetchTransitRoute(
   return data.result;
 }
 
+async function fetchLpmcPredict(
+  origin: Point,
+  destination: Point,
+  user_profile: LpmcUserProfile,
+  itinerary_index?: number
+): Promise<LpmcPredictResponse> {
+  const res = await fetch("http://127.0.0.1:8000/api/lpmc/predict", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ origin, destination, user_profile, itinerary_index }),
+  });
+  if (!res.ok) throw new Error(`Error LPMC predict: ${res.status}`);
+  return res.json();
+}
+
+async function fetchLpmcDebug(
+  origin: Point,
+  destination: Point,
+  user_profile: LpmcUserProfile,
+  itinerary_index?: number
+): Promise<LpmcDebugResponse> {
+  const res = await fetch("http://127.0.0.1:8000/api/lpmc/debug-features", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ origin, destination, user_profile, itinerary_index }),
+  });
+  if (!res.ok) throw new Error(`Error LPMC debug: ${res.status}`);
+  return res.json();
+}
+
 const PROFILE_LABELS: Record<Profile, string> = {
   driving: "Coche",
   cycling: "Bici",
   foot: "A pie",
+};
+
+const PURPOSE_OPTIONS: { value: LpmcPurpose; label: string }[] = [
+  { value: "B", label: "[B] Otros viajes base" },
+  { value: "HBE", label: "[HBE] Hogar - Educación" },
+  { value: "HBO", label: "[HBO] Hogar - Otros motivos" },
+  { value: "HBW", label: "[HBW] Hogar - Trabajo" },
+  { value: "NHBO", label: "[NHBO] No basados en hogar" },
+];
+
+const FUEL_OPTIONS: { value: LpmcFuel; label: string }[] = [
+  { value: "Average", label: "Promedio (Average)" },
+  { value: "Diesel", label: "Diesel" },
+  { value: "Hybrid", label: "Híbrido" },
+  { value: "Petrol", label: "Gasolina (Petrol)" },
+];
+
+const DAY_OPTIONS: { value: number; label: string }[] = [
+  { value: 1, label: "Lunes" },
+  { value: 2, label: "Martes" },
+  { value: 3, label: "Miércoles" },
+  { value: 4, label: "Jueves" },
+  { value: 5, label: "Viernes" },
+  { value: 6, label: "Sábado" },
+  { value: 7, label: "Domingo" },
+];
+
+const LPMC_MODE_LABELS: Record<LpmcPredictResponse["predicted_mode"], string> = {
+  walk: "A pie",
+  cycle: "Bicicleta",
+  pt: "Transporte público",
+  drive: "Coche",
 };
 
 // Colores coherentes entre botones y líneas
@@ -188,6 +289,21 @@ function colorForRouteId(routeId: string | null): string {
   return ROUTE_COLOR_PALETTE[idx];
 }
 
+function linearHourToTimeString(hour: number): string {
+  const totalMinutes = Math.max(0, Math.min(24 * 60 - 1, Math.round(hour * 60)));
+  const hh = Math.floor(totalMinutes / 60)
+    .toString()
+    .padStart(2, "0");
+  const mm = (totalMinutes % 60).toString().padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+function timeStringToLinearHour(value: string): number {
+  const [h, m] = value.split(":").map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return 12;
+  return h + m / 60;
+}
+
 function App() {
   const [origin, setOrigin] = useState<Point>({ lat: 39.87029, lon: -4.03434 });
   const [destination, setDestination] = useState<Point>({
@@ -206,6 +322,19 @@ function App() {
   // fecha por defecto = hoy (YYYY-MM-DD)
   const todayStr = new Date().toISOString().slice(0, 10);
   const [scheduleDate, setScheduleDate] = useState<string>(todayStr);
+  const [showLpmcDebug, setShowLpmcDebug] = useState(false);
+  const [lpmcProfile, setLpmcProfile] = useState<LpmcUserProfile>({
+    purpose: "HBW",
+    fueltype: "Average",
+    day_of_week: 3,
+    start_time_linear: 12,
+    age: 35,
+    female: 0,
+    driving_license: 1,
+    car_ownership: 1,
+    cost_transit: 1.5,
+    cost_driving_total: 3,
+  });
 
   // ---------------- OSRM ----------------
 
@@ -216,6 +345,20 @@ function App() {
   const transitMutation = useMutation<TransitResult, Error, number | null>({
     mutationFn: (idxOverride) =>
       fetchTransitRoute(origin, destination, idxOverride ?? transitItineraryIndex),
+  });
+
+  const lpmcPredictMutation = useMutation<
+    LpmcPredictResponse,
+    Error,
+    number | undefined
+  >({
+    mutationFn: (idx) =>
+      fetchLpmcPredict(origin, destination, lpmcProfile, idx ?? transitItineraryIndex),
+  });
+
+  const lpmcDebugMutation = useMutation<LpmcDebugResponse, Error, number | undefined>({
+    mutationFn: (idx) =>
+      fetchLpmcDebug(origin, destination, lpmcProfile, idx ?? transitItineraryIndex),
   });
 
   const isCalculating = osrmMutation.isPending || transitMutation.isPending;
@@ -405,7 +548,7 @@ function App() {
             </select>
             {gtfsRoutesQuery.isLoading && (
               <p style={{ fontSize: "0.8rem", color: "#6b7280" }}>
-                Cargando líneas…
+                Cargando líneas...
               </p>
             )}
             {gtfsRoutesQuery.error && (
@@ -520,7 +663,7 @@ function App() {
                           mainTransitSegment?.to_stop_name && (
                             <>
                               {" · "}
-                              {mainTransitSegment.from_stop_name} →{" "}
+                              {mainTransitSegment.from_stop_name} -{" "}
                               {mainTransitSegment.to_stop_name}
                             </>
                           )}
@@ -560,7 +703,7 @@ function App() {
                   transitItineraryIndex <= 0 || transitMutation.isPending
                 }
               >
-                ◀ Anterior
+                &lt; Anterior
               </button>
 
               <span>
@@ -583,7 +726,7 @@ function App() {
                   transitMutation.isPending
                 }
               >
-                Siguiente ▶
+                Siguiente &gt;
               </button>
             </div>
           )}
@@ -649,6 +792,273 @@ function App() {
             </div>
           )}
 
+          <div
+            style={{
+              marginTop: "1rem",
+              paddingTop: "0.75rem",
+              borderTop: "1px solid #e5e7eb",
+            }}
+          >
+            <h2 className="section-title">Inferencia LPMC</h2>
+            <p style={{ marginTop: "-0.25rem", fontSize: "0.8rem", color: "#4b5563" }}>
+              Hora de inicio: hora aproximada del viaje (formato 24h).
+            </p>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "0.5rem",
+              }}
+            >
+              <label>
+                <span style={{ fontSize: "0.8rem" }}>Motivo del viaje</span>
+                <select
+                  value={lpmcProfile.purpose}
+                  onChange={(e) =>
+                    setLpmcProfile((p) => ({
+                      ...p,
+                      purpose: e.target.value as LpmcPurpose,
+                    }))
+                  }
+                  style={{ width: "100%" }}
+                >
+                  {PURPOSE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                <span style={{ fontSize: "0.8rem" }}>Tipo de combustible</span>
+                <select
+                  value={lpmcProfile.fueltype}
+                  onChange={(e) =>
+                    setLpmcProfile((p) => ({
+                      ...p,
+                      fueltype: e.target.value as LpmcFuel,
+                    }))
+                  }
+                  style={{ width: "100%" }}
+                >
+                  {FUEL_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                <span style={{ fontSize: "0.8rem" }}>Día de la semana</span>
+                <select
+                  value={lpmcProfile.day_of_week}
+                  onChange={(e) =>
+                    setLpmcProfile((p) => ({
+                      ...p,
+                      day_of_week: Number(e.target.value),
+                    }))
+                  }
+                  style={{ width: "100%" }}
+                >
+                  {DAY_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                <span style={{ fontSize: "0.8rem" }}>Hora de inicio del viaje</span>
+                <input
+                  type="time"
+                  step={300}
+                  value={linearHourToTimeString(lpmcProfile.start_time_linear)}
+                  onChange={(e) =>
+                    setLpmcProfile((p) => ({
+                      ...p,
+                      start_time_linear: timeStringToLinearHour(e.target.value),
+                    }))
+                  }
+                  style={{ width: "100%" }}
+                />
+              </label>
+
+              <label>
+                <span style={{ fontSize: "0.8rem" }}>Edad</span>
+                <input
+                  type="number"
+                  min={16}
+                  max={100}
+                  value={lpmcProfile.age}
+                  onChange={(e) =>
+                    setLpmcProfile((p) => ({ ...p, age: Number(e.target.value) }))
+                  }
+                  style={{ width: "100%" }}
+                />
+              </label>
+
+              <label>
+                <span style={{ fontSize: "0.8rem" }}>Género</span>
+                <select
+                  value={lpmcProfile.female}
+                  onChange={(e) =>
+                    setLpmcProfile((p) => ({ ...p, female: Number(e.target.value) }))
+                  }
+                  style={{ width: "100%" }}
+                >
+                  <option value={0}>Masculino</option>
+                  <option value={1}>Femenino</option>
+                </select>
+              </label>
+
+              <label>
+                <span style={{ fontSize: "0.8rem" }}>Carnet de conducir</span>
+                <select
+                  value={lpmcProfile.driving_license}
+                  onChange={(e) =>
+                    setLpmcProfile((p) => ({
+                      ...p,
+                      driving_license: Number(e.target.value),
+                    }))
+                  }
+                  style={{ width: "100%" }}
+                >
+                  <option value={1}>Sí</option>
+                  <option value={0}>No</option>
+                </select>
+              </label>
+
+              <label>
+                <span style={{ fontSize: "0.8rem" }}>Coches en el hogar</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={3}
+                  value={lpmcProfile.car_ownership}
+                  onChange={(e) =>
+                    setLpmcProfile((p) => ({
+                      ...p,
+                      car_ownership: Number(e.target.value),
+                    }))
+                  }
+                  style={{ width: "100%" }}
+                />
+              </label>
+
+              <label>
+                <span style={{ fontSize: "0.8rem" }}>
+                  Coste transporte público (EUR)
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  value={lpmcProfile.cost_transit}
+                  onChange={(e) =>
+                    setLpmcProfile((p) => ({
+                      ...p,
+                      cost_transit: Number(e.target.value),
+                    }))
+                  }
+                  style={{ width: "100%" }}
+                />
+              </label>
+
+              <label>
+                <span style={{ fontSize: "0.8rem" }}>
+                  Coste total coche (EUR)
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  value={lpmcProfile.cost_driving_total}
+                  onChange={(e) =>
+                    setLpmcProfile((p) => ({
+                      ...p,
+                      cost_driving_total: Number(e.target.value),
+                    }))
+                  }
+                  style={{ width: "100%" }}
+                />
+              </label>
+            </div>
+
+            <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.6rem" }}>
+              <button
+                className="primary-button"
+                onClick={() => lpmcPredictMutation.mutate(transitItineraryIndex)}
+                disabled={lpmcPredictMutation.isPending}
+              >
+                {lpmcPredictMutation.isPending ? "Infiriendo..." : "Inferir modo"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowLpmcDebug((v) => !v);
+                  if (!showLpmcDebug) lpmcDebugMutation.mutate(transitItineraryIndex);
+                }}
+              >
+                {showLpmcDebug ? "Ocultar depuración" : "Ver depuración de variables"}
+              </button>
+            </div>
+
+            {lpmcPredictMutation.error && (
+              <p className="error-text">{lpmcPredictMutation.error.message}</p>
+            )}
+            {lpmcDebugMutation.error && (
+              <p className="error-text">{lpmcDebugMutation.error.message}</p>
+            )}
+
+            {lpmcPredictMutation.data && (
+              <div
+                style={{
+                  marginTop: "0.6rem",
+                  background: "#f9fafb",
+                  padding: "0.6rem",
+                  borderRadius: "0.4rem",
+                }}
+              >
+                <div>
+                  Predicción:{" "}
+                  <strong>{LPMC_MODE_LABELS[lpmcPredictMutation.data.predicted_mode]}</strong>{" "}
+                  ({(lpmcPredictMutation.data.confidence * 100).toFixed(1)}%)
+                </div>
+                <ul style={{ margin: "0.4rem 0 0 1rem", padding: 0 }}>
+                  <li>A pie: {(lpmcPredictMutation.data.probabilities.walk * 100).toFixed(1)}%</li>
+                  <li>Bicicleta: {(lpmcPredictMutation.data.probabilities.cycle * 100).toFixed(1)}%</li>
+                  <li>Transporte público: {(lpmcPredictMutation.data.probabilities.pt * 100).toFixed(1)}%</li>
+                  <li>Coche: {(lpmcPredictMutation.data.probabilities.drive * 100).toFixed(1)}%</li>
+                </ul>
+              </div>
+            )}
+
+            {showLpmcDebug && lpmcDebugMutation.data && (
+              <details open style={{ marginTop: "0.6rem" }}>
+                <summary style={{ cursor: "pointer" }}>
+                  Depuración de variables (entrada al modelo)
+                </summary>
+                <pre
+                  style={{
+                    marginTop: "0.5rem",
+                    fontSize: "0.75rem",
+                    maxHeight: "220px",
+                    overflow: "auto",
+                    background: "#0f172a",
+                    color: "#e5e7eb",
+                    padding: "0.5rem",
+                    borderRadius: "0.4rem",
+                  }}
+                >
+                  {JSON.stringify(lpmcDebugMutation.data, null, 2)}
+                </pre>
+              </details>
+            )}
+          </div>
+
           {/* Bloque de transporte público GTFS */}
           {selectedTransitRouteId && (
             <div className="transit-summary">
@@ -688,7 +1098,7 @@ function App() {
                 />
               </div>
 
-              {transitScheduleQuery.isLoading && <p>Cargando horarios…</p>}
+              {transitScheduleQuery.isLoading && <p>Cargando horarios...</p>}
               {transitScheduleQuery.error && (
                 <p className="error-text">
                   Error cargando horarios de la ruta seleccionada.
@@ -752,7 +1162,7 @@ function App() {
                               {sample
                                 .map((t) => stripSeconds(t))
                                 .join(" · ")}
-                              {remaining > 0 && ` … (+${remaining} más)`}
+                              {remaining > 0 && ` ... (+${remaining} más)`}
                             </div>
                           </div>
                         );
@@ -777,3 +1187,6 @@ function App() {
 }
 
 export default App;
+
+
+
