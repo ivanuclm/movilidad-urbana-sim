@@ -791,7 +791,8 @@ function App() {
               </ol>
             </div>
           )}
-
+        </section>
+        <section className="card lpmc-card">
           <div
             style={{
               marginTop: "1rem",
@@ -995,23 +996,11 @@ function App() {
               >
                 {lpmcPredictMutation.isPending ? "Infiriendo..." : "Inferir modo"}
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowLpmcDebug((v) => !v);
-                  if (!showLpmcDebug) lpmcDebugMutation.mutate(transitItineraryIndex);
-                }}
-              >
-                {showLpmcDebug ? "Ocultar depuración" : "Ver depuración de variables"}
-              </button>
             </div>
 
             {lpmcPredictMutation.error && (
               <p className="error-text">{lpmcPredictMutation.error.message}</p>
-            )}
-            {lpmcDebugMutation.error && (
-              <p className="error-text">{lpmcDebugMutation.error.message}</p>
-            )}
+            )}            
 
             {lpmcPredictMutation.data && (
               <div
@@ -1036,6 +1025,21 @@ function App() {
               </div>
             )}
 
+            <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.6rem" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowLpmcDebug((v) => !v);
+                  if (!showLpmcDebug) lpmcDebugMutation.mutate(transitItineraryIndex);
+                }}
+              >
+                {showLpmcDebug ? "Ocultar depuración" : "Ver depuración de variables"}
+              </button>
+            </div>
+            {lpmcDebugMutation.error && (
+              <p className="error-text">{lpmcDebugMutation.error.message}</p>
+            )}
+
             {showLpmcDebug && lpmcDebugMutation.data && (
               <details open style={{ marginTop: "0.6rem" }}>
                 <summary style={{ cursor: "pointer" }}>
@@ -1058,7 +1062,8 @@ function App() {
               </details>
             )}
           </div>
-
+        </section>
+        <section className="card lineas-bus-card">
           {/* Bloque de transporte público GTFS */}
           {selectedTransitRouteId && (
             <div className="transit-summary">
